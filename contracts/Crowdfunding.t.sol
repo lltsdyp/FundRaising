@@ -59,6 +59,21 @@ contract CrowdfundingTest is Test {
     assertEq(project.getContractBalance(), 2 ether);
   }
 
+  function test_DirectProjectContributionCannotSpoofContributorIdentity() public {
+    Project project = _createProject();
+    address spoofedContributor = contributorTwo;
+
+    vm.deal(contributor, 5 ether);
+    vm.prank(contributor);
+    vm.expectRevert(bytes("Only crowdfunding contract"));
+    project.contribute{value: 2 ether}(spoofedContributor);
+
+    assertEq(project.contributions(spoofedContributor), 0);
+    assertEq(project.raisedAmount(), 0);
+    assertEq(project.noOfContributors(), 0);
+    assertEq(project.getContractBalance(), 0);
+  }
+
   function test_ContributorCountedOnce() public {
     Project project = _createProject();
 

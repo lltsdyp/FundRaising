@@ -27,6 +27,7 @@ contract Project {
   uint16 public constant MILESTONE_APPROVAL_THRESHOLD_BPS = 5_000;
 
   address payable public creator;
+  address public crowdfundingContract;
   uint256 public minimumContribution;
   uint256 public deadline;
   uint256 public targetContribution;
@@ -91,6 +92,7 @@ contract Project {
     require(bytes(_projectTitle).length > 0, "Project title is empty");
 
     creator = payable(_creator);
+    crowdfundingContract = msg.sender;
     minimumContribution = _minimumContribution;
     deadline = _deadline;
     targetContribution = _targetContribution;
@@ -134,6 +136,8 @@ contract Project {
   }
 
   function contribute(address _contributor) external payable {
+    require(msg.sender == crowdfundingContract, "Only crowdfunding contract");
+
     refreshState();
 
     require(state == State.Fundraising, "Project is not ongoing");
