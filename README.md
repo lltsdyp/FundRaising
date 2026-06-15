@@ -15,6 +15,23 @@ This example project includes:
 
 ## Usage
 
+### Running the frontend
+
+Deploy `Crowdfunding` first, then set the deployed address in `.env`:
+
+```shell
+cp .env.example .env
+```
+
+Update `VITE_CROWDFUNDING_ADDRESS`, or paste the contract address in the app.
+
+```shell
+npm run dev
+```
+
+The app connects to MetaMask, lists projects from the Crowdfunding contract, and
+lets users create projects, donate, and withdraw or refund after the deadline.
+
 ### Running Tests
 
 To run all the tests in the project, execute the following command:

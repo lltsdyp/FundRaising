@@ -65,6 +65,7 @@ contract Project {
 
     require(state == State.Fundraising, "Project is not ongoing");
     require(_contributor != address(0), "Invalid contributor");
+    require(_contributor != creator, "Creator cannot contribute to own project");
     require(msg.value >= minimumContribution, "Contribution amount is too low !");
 
     if (contributions[_contributor] == 0) {

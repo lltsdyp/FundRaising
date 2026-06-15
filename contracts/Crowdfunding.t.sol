@@ -278,6 +278,15 @@ contract CrowdfundingTest is Test {
     crowdfunding.contribute{value: 0.5 ether}(address(project));
   }
 
+  function test_CreatorCannotContributeToOwnProject() public {
+    Project project = _createProject();
+
+    vm.deal(creator, 2 ether);
+    vm.prank(creator);
+    vm.expectRevert(bytes("Creator cannot contribute to own project"));
+    crowdfunding.contribute{value: 1 ether}(address(project));
+  }
+
   function _createProject() internal returns (Project) {
     vm.prank(creator);
     crowdfunding.createProject(

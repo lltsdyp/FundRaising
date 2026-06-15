@@ -1,0 +1,92 @@
+export const crowdfundingAbi = [
+  {
+    type: "function",
+    name: "createProject",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "minimumContribution", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+      { name: "targetContribution", type: "uint256" },
+      { name: "projectTitle", type: "string" },
+      { name: "projectDesc", type: "string" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "returnAllProjects",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address[]" }],
+  },
+  {
+    type: "function",
+    name: "contribute",
+    stateMutability: "payable",
+    inputs: [{ name: "projectAddress", type: "address" }],
+    outputs: [],
+  },
+] as const;
+
+export const projectAbi = [
+  {
+    type: "function",
+    name: "contributions",
+    stateMutability: "view",
+    inputs: [{ name: "contributor", type: "address" }],
+    outputs: [{ name: "amount", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "creatorWithdrawn",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "bool" }],
+  },
+  {
+    type: "function",
+    name: "getContributors",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address[]" }],
+  },
+  {
+    type: "function",
+    name: "getProjectDetails",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [
+      { name: "projectStarter", type: "address" },
+      { name: "minContribution", type: "uint256" },
+      { name: "projectDeadline", type: "uint256" },
+      { name: "goalAmount", type: "uint256" },
+      { name: "currentAmount", type: "uint256" },
+      { name: "contributorCount", type: "uint256" },
+      { name: "title", type: "string" },
+      { name: "desc", type: "string" },
+      { name: "currentState", type: "uint8" },
+      { name: "balance", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "getRemainingTime",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "withdrawContribution",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "withdrawRaisedFunds",
+    stateMutability: "nonpayable",
+    inputs: [],
+    outputs: [],
+  },
+] as const;

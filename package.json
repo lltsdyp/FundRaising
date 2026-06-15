@@ -2,13 +2,34 @@
   "name": "MyFundings",
   "version": "1.0.0",
   "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.app.json --noEmit && vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "viem": "^2.52.2"
+  },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@nomicfoundation/hardhat-ignition": "^3.1.7",
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.7",
     "@types/node": "^22.19.21",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "eslint": "^10.5.0",
     "forge-std": "github:foundry-rs/forge-std#v1.9.4",
+    "globals": "^17.6.0",
     "hardhat": "^3.9.0",
+    "jsdom": "^29.1.1",
+    "typescript-eslint": "^8.61.0",
     "typescript": "~6.0.3",
-    "viem": "^2.52.2"
+    "vite": "^8.0.16",
+    "vitest": "^4.1.9"
   }
 }
