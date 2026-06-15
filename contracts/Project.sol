@@ -17,6 +17,8 @@ contract Project {
   string public projectTitle;
   string public projectDesc;
   State public state = State.Fundraising;
+  bool public projectEnded;
+  bool public creatorWithdrawn;
 
   mapping(address contributor => uint256 amount) public contributions;
   address[] private contributors;
@@ -28,6 +30,13 @@ contract Project {
   );
 
   event StateChanged(State previousState, State newState);
+  event ProjectEnded(
+    State finalState,
+    uint256 raisedAmount,
+    uint256 targetContribution
+  );
+  event CreatorWithdrawal(address indexed creator, uint256 amount);
+  event ContributionRefunded(address indexed contributor, uint256 amount);
 
   constructor(
     address _creator,
@@ -79,15 +88,15 @@ contract Project {
   }
 
   function getCurrentState() public view returns (State) {
+    if (block.timestamp < deadline) {
+      return State.Fundraising;
+    }
+
     if (raisedAmount >= targetContribution) {
       return State.Successful;
     }
 
-    if (block.timestamp >= deadline) {
-      return State.Expired;
-    }
-
-    return State.Fundraising;
+    return State.Expired;
   }
 
   function refreshState() public returns (State) {
@@ -100,6 +109,45 @@ contract Project {
     }
 
     return state;
+  }
+
+  function endProject() external returns (State) {
+    return _finalizeProject();
+  }
+
+  function withdrawRaisedFunds() external {
+    require(msg.sender == creator, "Only creator");
+
+    State currentState = _finalizeProject();
+
+    require(currentState == State.Successful, "Project is not successful");
+    require(!creatorWithdrawn, "Funds already withdrawn");
+
+    uint256 amount = address(this).balance;
+    require(amount > 0, "No funds to withdraw");
+
+    creatorWithdrawn = true;
+
+    (bool success, ) = creator.call{value: amount}("");
+    require(success, "Creator withdrawal failed");
+
+    emit CreatorWithdrawal(creator, amount);
+  }
+
+  function withdrawContribution() external {
+    State currentState = _finalizeProject();
+
+    require(currentState == State.Expired, "Project did not fail");
+
+    uint256 amount = contributions[msg.sender];
+    require(amount > 0, "No contribution to withdraw");
+
+    contributions[msg.sender] = 0;
+
+    (bool success, ) = payable(msg.sender).call{value: amount}("");
+    require(success, "Contribution refund failed");
+
+    emit ContributionRefunded(msg.sender, amount);
   }
 
   function isOngoing() public view returns (bool) {
@@ -140,5 +188,18 @@ contract Project {
     desc = projectDesc;
     currentState = getCurrentState();
     balance = address(this).balance;
+  }
+
+  function _finalizeProject() internal returns (State) {
+    require(block.timestamp >= deadline, "Deadline has not passed");
+
+    State finalState = refreshState();
+
+    if (!projectEnded) {
+      projectEnded = true;
+      emit ProjectEnded(finalState, raisedAmount, targetContribution);
+    }
+
+    return finalState;
   }
 }

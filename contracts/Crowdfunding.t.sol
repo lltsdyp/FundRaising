@@ -144,28 +144,129 @@ contract CrowdfundingTest is Test {
     assertEq(uint256(currentState), uint256(Project.State.Expired));
   }
 
-  function test_ContributionMarksProjectSuccessfulWhenTargetReached() public {
+  function test_ReachingTargetBeforeDeadlineKeepsFundraisingAndAllowsMoreContributions()
+    public
+  {
+    Project project = _createProject();
+
+    vm.deal(contributor, targetContribution);
+    vm.deal(contributorTwo, minimumContribution);
+
+    vm.prank(contributor);
+    crowdfunding.contribute{value: targetContribution}(address(project));
+
+    assertEq(uint256(project.state()), uint256(Project.State.Fundraising));
+    assertTrue(project.isOngoing());
+
+    vm.prank(contributorTwo);
+    crowdfunding.contribute{value: minimumContribution}(address(project));
+
+    assertEq(project.raisedAmount(), targetContribution + minimumContribution);
+  }
+
+  function test_EndProjectBeforeDeadlineReverts() public {
+    Project project = _createProject();
+
+    vm.expectRevert(bytes("Deadline has not passed"));
+    project.endProject();
+  }
+
+  function test_EndProjectAfterDeadlineMarksSuccessfulWhenTargetReached()
+    public
+  {
     Project project = _createProject();
 
     vm.deal(contributor, targetContribution);
     vm.prank(contributor);
     crowdfunding.contribute{value: targetContribution}(address(project));
+
+    vm.warp(deadline);
+
+    vm.prank(contributorTwo);
+    project.endProject();
 
     assertEq(uint256(project.state()), uint256(Project.State.Successful));
     assertFalse(project.isOngoing());
   }
 
-  function test_ContributionAfterSuccessReverts() public {
-    Project project = _createProject();
-
-    vm.deal(contributor, targetContribution);
-    vm.prank(contributor);
-    crowdfunding.contribute{value: targetContribution}(address(project));
+  function test_ContributionAfterSuccessfulEndReverts() public {
+    Project project = _createSuccessfulEndedProject();
 
     vm.deal(contributorTwo, minimumContribution);
     vm.prank(contributorTwo);
     vm.expectRevert(bytes("Project is not ongoing"));
     crowdfunding.contribute{value: minimumContribution}(address(project));
+  }
+
+  function test_CreatorWithdrawsFundsAfterSuccessfulEnd() public {
+    Project project = _createSuccessfulEndedProject();
+
+    assertEq(project.getContractBalance(), targetContribution);
+
+    vm.prank(creator);
+    project.withdrawRaisedFunds();
+
+    assertEq(creator.balance, targetContribution);
+    assertEq(project.getContractBalance(), 0);
+
+    vm.prank(creator);
+    vm.expectRevert(bytes("Funds already withdrawn"));
+    project.withdrawRaisedFunds();
+  }
+
+  function test_OnlyCreatorCanWithdrawSuccessfulFunds() public {
+    Project project = _createSuccessfulEndedProject();
+
+    vm.prank(contributor);
+    vm.expectRevert(bytes("Only creator"));
+    project.withdrawRaisedFunds();
+  }
+
+  function test_ContributorWithdrawsContributionAfterFailedEnd() public {
+    Project project = _createProject();
+
+    vm.deal(contributor, 5 ether);
+    vm.prank(contributor);
+    crowdfunding.contribute{value: 2 ether}(address(project));
+
+    vm.warp(deadline);
+    project.endProject();
+
+    assertEq(uint256(project.state()), uint256(Project.State.Expired));
+
+    vm.prank(contributor);
+    project.withdrawContribution();
+
+    assertEq(contributor.balance, 5 ether);
+    assertEq(project.contributions(contributor), 0);
+    assertEq(project.getContractBalance(), 0);
+
+    vm.prank(contributor);
+    vm.expectRevert(bytes("No contribution to withdraw"));
+    project.withdrawContribution();
+  }
+
+  function test_CreatorCannotWithdrawFromFailedProject() public {
+    Project project = _createProject();
+
+    vm.deal(contributor, 5 ether);
+    vm.prank(contributor);
+    crowdfunding.contribute{value: 2 ether}(address(project));
+
+    vm.warp(deadline);
+    project.endProject();
+
+    vm.prank(creator);
+    vm.expectRevert(bytes("Project is not successful"));
+    project.withdrawRaisedFunds();
+  }
+
+  function test_ContributorCannotWithdrawFromSuccessfulProject() public {
+    Project project = _createSuccessfulEndedProject();
+
+    vm.prank(contributor);
+    vm.expectRevert(bytes("Project did not fail"));
+    project.withdrawContribution();
   }
 
   function test_ContributionBelowMinimumReverts() public {
@@ -189,5 +290,18 @@ contract CrowdfundingTest is Test {
 
     Project[] memory projects = crowdfunding.returnAllProjects();
     return projects[0];
+  }
+
+  function _createSuccessfulEndedProject() internal returns (Project) {
+    Project project = _createProject();
+
+    vm.deal(contributor, targetContribution);
+    vm.prank(contributor);
+    crowdfunding.contribute{value: targetContribution}(address(project));
+
+    vm.warp(deadline);
+    project.endProject();
+
+    return project;
   }
 }
