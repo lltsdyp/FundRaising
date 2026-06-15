@@ -180,6 +180,10 @@ contract Project {
 
   function withdrawRaisedFunds() external {
     require(msg.sender == creator, "Only creator");
+    require(
+      fundingModel == FundingModel.AllOrNothing,
+      "Milestone funds release by milestone"
+    );
 
     State currentState = _finalizeProject();
 

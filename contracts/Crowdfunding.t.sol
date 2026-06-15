@@ -366,6 +366,23 @@ contract CrowdfundingTest is Test {
     );
   }
 
+  function test_CreatorCannotWithdrawMilestoneFundsThroughAllOrNothingPath()
+    public
+  {
+    Project project = _createMilestoneProject();
+
+    vm.deal(contributor, targetContribution);
+    vm.prank(contributor);
+    crowdfunding.contribute{value: targetContribution}(address(project));
+
+    vm.warp(deadline);
+    project.endProject();
+
+    vm.prank(creator);
+    vm.expectRevert(bytes("Milestone funds release by milestone"));
+    project.withdrawRaisedFunds();
+  }
+
   function _createProject() internal returns (Project) {
     vm.prank(creator);
     crowdfunding.createProject(
@@ -374,6 +391,30 @@ contract CrowdfundingTest is Test {
       targetContribution,
       "Education fund",
       "Books and equipment"
+    );
+
+    Project[] memory projects = crowdfunding.returnAllProjects();
+    return projects[0];
+  }
+
+  function _createMilestoneProject() internal returns (Project) {
+    string[] memory titles = new string[](2);
+    titles[0] = "Prototype";
+    titles[1] = "Launch";
+
+    uint16[] memory releaseBps = new uint16[](2);
+    releaseBps[0] = 5_000;
+    releaseBps[1] = 5_000;
+
+    vm.prank(creator);
+    crowdfunding.createMilestoneProject(
+      minimumContribution,
+      deadline,
+      targetContribution,
+      "Milestone fund",
+      "Stage based release",
+      titles,
+      releaseBps
     );
 
     Project[] memory projects = crowdfunding.returnAllProjects();
