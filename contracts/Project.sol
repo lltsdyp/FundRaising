@@ -8,6 +8,24 @@ contract Project {
     Successful
   }
 
+  enum FundingModel {
+    AllOrNothing,
+    Milestone
+  }
+
+  struct Milestone {
+    string title;
+    string evidenceUri;
+    uint16 releaseBps;
+    uint256 approvalWeight;
+    bool submitted;
+    bool released;
+    uint256 releasedAmount;
+  }
+
+  uint16 public constant BASIS_POINTS = 10_000;
+  uint16 public constant MILESTONE_APPROVAL_THRESHOLD_BPS = 5_000;
+
   address payable public creator;
   uint256 public minimumContribution;
   uint256 public deadline;
@@ -19,8 +37,14 @@ contract Project {
   State public state = State.Fundraising;
   bool public projectEnded;
   bool public creatorWithdrawn;
+  FundingModel public fundingModel;
+  uint256 public nextMilestoneIndex;
+  uint256 public totalReleasedAmount;
 
   mapping(address contributor => uint256 amount) public contributions;
+  Milestone[] private milestones;
+  mapping(uint256 milestoneIndex => mapping(address contributor => bool approved))
+    public milestoneApprovals;
   address[] private contributors;
 
   event FundingReceived(
@@ -44,7 +68,10 @@ contract Project {
     uint256 _deadline,
     uint256 _targetContribution,
     string memory _projectTitle,
-    string memory _projectDesc
+    string memory _projectDesc,
+    FundingModel _fundingModel,
+    string[] memory _milestoneTitles,
+    uint16[] memory _milestoneReleaseBps
   ) {
     require(_creator != address(0), "Invalid creator");
     require(_minimumContribution > 0, "Minimum contribution is zero");
@@ -58,6 +85,41 @@ contract Project {
     targetContribution = _targetContribution;
     projectTitle = _projectTitle;
     projectDesc = _projectDesc;
+    fundingModel = _fundingModel;
+
+    if (_fundingModel == FundingModel.AllOrNothing) {
+      require(_milestoneTitles.length == 0, "All-or-nothing has no milestones");
+      require(_milestoneReleaseBps.length == 0, "All-or-nothing has no milestones");
+      return;
+    }
+
+    require(_milestoneTitles.length > 0, "Milestone project needs milestones");
+    require(
+      _milestoneTitles.length == _milestoneReleaseBps.length,
+      "Milestone input length mismatch"
+    );
+
+    uint256 totalBps;
+
+    for (uint256 i = 0; i < _milestoneTitles.length; i++) {
+      require(bytes(_milestoneTitles[i]).length > 0, "Milestone title is empty");
+      require(_milestoneReleaseBps[i] > 0, "Milestone percentage is zero");
+
+      totalBps += _milestoneReleaseBps[i];
+      milestones.push(
+        Milestone({
+          title: _milestoneTitles[i],
+          evidenceUri: "",
+          releaseBps: _milestoneReleaseBps[i],
+          approvalWeight: 0,
+          submitted: false,
+          released: false,
+          releasedAmount: 0
+        })
+      );
+    }
+
+    require(totalBps == BASIS_POINTS, "Milestone percentages must total 100%");
   }
 
   function contribute(address _contributor) external payable {
@@ -161,6 +223,38 @@ contract Project {
     }
 
     return deadline - block.timestamp;
+  }
+
+  function getMilestoneCount() external view returns (uint256) {
+    return milestones.length;
+  }
+
+  function getMilestone(uint256 milestoneIndex)
+    external
+    view
+    returns (
+      string memory title,
+      string memory evidenceUri,
+      uint16 releaseBps,
+      uint256 approvalWeight,
+      bool submitted,
+      bool released,
+      uint256 releasedAmount
+    )
+  {
+    require(milestoneIndex < milestones.length, "Invalid milestone");
+
+    Milestone storage milestone = milestones[milestoneIndex];
+
+    return (
+      milestone.title,
+      milestone.evidenceUri,
+      milestone.releaseBps,
+      milestone.approvalWeight,
+      milestone.submitted,
+      milestone.released,
+      milestone.releasedAmount
+    );
   }
 
   function getProjectDetails()

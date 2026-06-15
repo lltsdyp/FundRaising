@@ -287,6 +287,85 @@ contract CrowdfundingTest is Test {
     crowdfunding.contribute{value: 1 ether}(address(project));
   }
 
+  function test_CreateAllOrNothingProjectKeepsExistingBehavior() public {
+    Project project = _createProject();
+
+    assertEq(uint256(project.fundingModel()), uint256(Project.FundingModel.AllOrNothing));
+    assertEq(project.getMilestoneCount(), 0);
+    assertEq(project.creatorWithdrawn(), false);
+  }
+
+  function test_CreateMilestoneProjectStoresMilestonePlan() public {
+    string[] memory titles = new string[](3);
+    titles[0] = "Prototype";
+    titles[1] = "Beta";
+    titles[2] = "Launch";
+
+    uint16[] memory releaseBps = new uint16[](3);
+    releaseBps[0] = 2_500;
+    releaseBps[1] = 3_500;
+    releaseBps[2] = 4_000;
+
+    vm.prank(creator);
+    crowdfunding.createMilestoneProject(
+      minimumContribution,
+      deadline,
+      targetContribution,
+      "Milestone fund",
+      "Stage based release",
+      titles,
+      releaseBps
+    );
+
+    Project[] memory projects = crowdfunding.returnAllProjects();
+    Project project = projects[0];
+
+    assertEq(uint256(project.fundingModel()), uint256(Project.FundingModel.Milestone));
+    assertEq(project.getMilestoneCount(), 3);
+
+    (
+      string memory title,
+      string memory evidenceUri,
+      uint16 bps,
+      uint256 approvalWeight,
+      bool submitted,
+      bool released,
+      uint256 milestoneReleasedAmount
+    ) = project.getMilestone(1);
+
+    assertEq(title, "Beta");
+    assertEq(evidenceUri, "");
+    assertEq(bps, 3_500);
+    assertEq(approvalWeight, 0);
+    assertFalse(submitted);
+    assertFalse(released);
+    assertEq(milestoneReleasedAmount, 0);
+  }
+
+  function test_CreateMilestoneProjectRequiresPercentagesToSumToOneHundredPercent()
+    public
+  {
+    string[] memory titles = new string[](2);
+    titles[0] = "Prototype";
+    titles[1] = "Launch";
+
+    uint16[] memory releaseBps = new uint16[](2);
+    releaseBps[0] = 4_000;
+    releaseBps[1] = 4_000;
+
+    vm.prank(creator);
+    vm.expectRevert(bytes("Milestone percentages must total 100%"));
+    crowdfunding.createMilestoneProject(
+      minimumContribution,
+      deadline,
+      targetContribution,
+      "Milestone fund",
+      "Stage based release",
+      titles,
+      releaseBps
+    );
+  }
+
   function _createProject() internal returns (Project) {
     vm.prank(creator);
     crowdfunding.createProject(

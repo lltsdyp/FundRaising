@@ -14,7 +14,8 @@ contract Crowdfunding {
     uint256 noOfContributors,
     string title,
     string desc,
-    uint256 currentState
+    uint256 currentState,
+    uint256 fundingModel
   );
 
   event ContributionReceived(
@@ -32,13 +33,19 @@ contract Crowdfunding {
     string memory projectTitle,
     string memory projectDesc
   ) external {
+    string[] memory milestoneTitles = new string[](0);
+    uint16[] memory milestoneReleaseBps = new uint16[](0);
+
     Project newProject = new Project(
       msg.sender,
       minimumContribution,
       deadline,
       targetContribution,
       projectTitle,
-      projectDesc
+      projectDesc,
+      Project.FundingModel.AllOrNothing,
+      milestoneTitles,
+      milestoneReleaseBps
     );
 
     projects.push(newProject);
@@ -53,7 +60,46 @@ contract Crowdfunding {
       0,
       projectTitle,
       projectDesc,
-      uint256(Project.State.Fundraising)
+      uint256(Project.State.Fundraising),
+      uint256(Project.FundingModel.AllOrNothing)
+    );
+  }
+
+  function createMilestoneProject(
+    uint256 minimumContribution,
+    uint256 deadline,
+    uint256 targetContribution,
+    string memory projectTitle,
+    string memory projectDesc,
+    string[] memory milestoneTitles,
+    uint16[] memory milestoneReleaseBps
+  ) external {
+    Project newProject = new Project(
+      msg.sender,
+      minimumContribution,
+      deadline,
+      targetContribution,
+      projectTitle,
+      projectDesc,
+      Project.FundingModel.Milestone,
+      milestoneTitles,
+      milestoneReleaseBps
+    );
+
+    projects.push(newProject);
+
+    emit ProjectStarted(
+      address(newProject),
+      msg.sender,
+      minimumContribution,
+      deadline,
+      targetContribution,
+      0,
+      0,
+      projectTitle,
+      projectDesc,
+      uint256(Project.State.Fundraising),
+      uint256(Project.FundingModel.Milestone)
     );
   }
 
