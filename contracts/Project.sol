@@ -61,6 +61,17 @@ contract Project {
   );
   event CreatorWithdrawal(address indexed creator, uint256 amount);
   event ContributionRefunded(address indexed contributor, uint256 amount);
+  event MilestoneSubmitted(uint256 indexed milestoneIndex, string evidenceUri);
+  event MilestoneApproved(
+    uint256 indexed milestoneIndex,
+    address indexed contributor,
+    uint256 approvalWeight
+  );
+  event MilestoneFundsReleased(
+    uint256 indexed milestoneIndex,
+    address indexed creator,
+    uint256 amount
+  );
 
   constructor(
     address _creator,
@@ -201,6 +212,95 @@ contract Project {
     emit CreatorWithdrawal(creator, amount);
   }
 
+  function submitMilestone(uint256 milestoneIndex, string memory evidenceUri)
+    external
+  {
+    require(msg.sender == creator, "Only creator");
+    require(fundingModel == FundingModel.Milestone, "Project has no milestones");
+    require(milestoneIndex < milestones.length, "Invalid milestone");
+    require(milestoneIndex == nextMilestoneIndex, "Milestones must be sequential");
+    require(bytes(evidenceUri).length > 0, "Evidence URI is empty");
+
+    State currentState = _finalizeProject();
+    require(currentState == State.Successful, "Project is not successful");
+
+    Milestone storage milestone = milestones[milestoneIndex];
+    require(!milestone.submitted, "Milestone already submitted");
+    require(!milestone.released, "Milestone already released");
+
+    milestone.submitted = true;
+    milestone.evidenceUri = evidenceUri;
+
+    emit MilestoneSubmitted(milestoneIndex, evidenceUri);
+  }
+
+  function approveMilestone(uint256 milestoneIndex) external {
+    require(fundingModel == FundingModel.Milestone, "Project has no milestones");
+    require(milestoneIndex < milestones.length, "Invalid milestone");
+    require(contributions[msg.sender] > 0, "Only contributors can approve");
+    require(
+      !milestoneApprovals[milestoneIndex][msg.sender],
+      "Milestone already approved"
+    );
+
+    Milestone storage milestone = milestones[milestoneIndex];
+    require(milestone.submitted, "Milestone not submitted");
+    require(!milestone.released, "Milestone already released");
+
+    milestoneApprovals[milestoneIndex][msg.sender] = true;
+    milestone.approvalWeight += contributions[msg.sender];
+
+    emit MilestoneApproved(
+      milestoneIndex,
+      msg.sender,
+      milestone.approvalWeight
+    );
+  }
+
+  function releaseMilestoneFunds(uint256 milestoneIndex) external {
+    require(fundingModel == FundingModel.Milestone, "Project has no milestones");
+    require(milestoneIndex < milestones.length, "Invalid milestone");
+    require(milestoneIndex == nextMilestoneIndex, "Milestones must be sequential");
+
+    Milestone storage milestone = milestones[milestoneIndex];
+    require(milestone.submitted, "Milestone not submitted");
+    require(!milestone.released, "Milestone already released");
+    require(
+      _hasMilestoneApproval(milestone.approvalWeight),
+      "Milestone lacks contributor approval"
+    );
+
+    uint256 amount;
+
+    if (milestoneIndex == milestones.length - 1) {
+      amount = address(this).balance;
+    } else {
+      amount = (raisedAmount * milestone.releaseBps) / BASIS_POINTS;
+    }
+
+    require(amount > 0, "No funds to release");
+
+    milestone.released = true;
+    milestone.releasedAmount = amount;
+    totalReleasedAmount += amount;
+    nextMilestoneIndex++;
+
+    (bool success, ) = creator.call{value: amount}("");
+    require(success, "Milestone withdrawal failed");
+
+    emit MilestoneFundsReleased(milestoneIndex, creator, amount);
+  }
+
+  function isMilestoneApproved(uint256 milestoneIndex)
+    external
+    view
+    returns (bool)
+  {
+    require(milestoneIndex < milestones.length, "Invalid milestone");
+
+    return _hasMilestoneApproval(milestones[milestoneIndex].approvalWeight);
+  }
+
   function withdrawContribution() external {
     State currentState = _finalizeProject();
 
@@ -287,6 +387,14 @@ contract Project {
     desc = projectDesc;
     currentState = getCurrentState();
     balance = address(this).balance;
+  }
+
+  function _hasMilestoneApproval(uint256 approvalWeight)
+    internal
+    view
+    returns (bool)
+  {
+    return approvalWeight * BASIS_POINTS >= raisedAmount * MILESTONE_APPROVAL_THRESHOLD_BPS;
   }
 
   function _finalizeProject() internal returns (State) {

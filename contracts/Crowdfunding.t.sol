@@ -383,6 +383,120 @@ contract CrowdfundingTest is Test {
     project.withdrawRaisedFunds();
   }
 
+  function test_MilestoneProjectReleasesApprovedMilestonesSequentially() public {
+    Project project = _createSuccessfulMilestoneProject();
+
+    vm.prank(creator);
+    project.submitMilestone(0, "ipfs://prototype");
+
+    vm.prank(contributor);
+    project.approveMilestone(0);
+
+    assertTrue(project.isMilestoneApproved(0));
+
+    uint256 creatorBalanceBefore = creator.balance;
+
+    vm.prank(contributorTwo);
+    project.releaseMilestoneFunds(0);
+
+    assertEq(creator.balance - creatorBalanceBefore, 2.5 ether);
+    assertEq(project.getContractBalance(), 7.5 ether);
+    assertEq(project.nextMilestoneIndex(), 1);
+    assertEq(project.totalReleasedAmount(), 2.5 ether);
+
+    (, , , , , bool released, uint256 milestoneReleasedAmount) = project
+      .getMilestone(0);
+
+    assertTrue(released);
+    assertEq(milestoneReleasedAmount, 2.5 ether);
+  }
+
+  function test_MilestoneReleaseRequiresContributorApprovalThreshold() public {
+    Project project = _createSuccessfulMilestoneProject();
+
+    vm.prank(creator);
+    project.submitMilestone(0, "ipfs://prototype");
+
+    vm.prank(contributorTwo);
+    project.approveMilestone(0);
+
+    vm.expectRevert(bytes("Milestone lacks contributor approval"));
+    project.releaseMilestoneFunds(0);
+
+    vm.prank(contributor);
+    project.approveMilestone(0);
+
+    project.releaseMilestoneFunds(0);
+
+    assertEq(project.getContractBalance(), 7.5 ether);
+  }
+
+  function test_FinalMilestoneReleasesRemainingBalance() public {
+    Project project = _createSuccessfulMilestoneProject();
+
+    _submitApproveAndRelease(project, 0, "ipfs://prototype");
+    _submitApproveAndRelease(project, 1, "ipfs://beta");
+    _submitApproveAndRelease(project, 2, "ipfs://launch");
+
+    assertEq(project.getContractBalance(), 0);
+    assertEq(project.totalReleasedAmount(), 10 ether);
+    assertEq(project.nextMilestoneIndex(), 3);
+  }
+
+  function _createSuccessfulMilestoneProject() internal returns (Project) {
+    string[] memory titles = new string[](3);
+    titles[0] = "Prototype";
+    titles[1] = "Beta";
+    titles[2] = "Launch";
+
+    uint16[] memory releaseBps = new uint16[](3);
+    releaseBps[0] = 2_500;
+    releaseBps[1] = 3_500;
+    releaseBps[2] = 4_000;
+
+    vm.prank(creator);
+    crowdfunding.createMilestoneProject(
+      minimumContribution,
+      deadline,
+      targetContribution,
+      "Milestone fund",
+      "Stage based release",
+      titles,
+      releaseBps
+    );
+
+    Project[] memory projects = crowdfunding.returnAllProjects();
+    Project project = projects[0];
+
+    vm.deal(contributor, 10 ether);
+    vm.deal(contributorTwo, 1 ether);
+
+    vm.prank(contributor);
+    crowdfunding.contribute{value: 9 ether}(address(project));
+
+    vm.prank(contributorTwo);
+    crowdfunding.contribute{value: 1 ether}(address(project));
+
+    vm.warp(deadline);
+    project.endProject();
+
+    return project;
+  }
+
+  function _submitApproveAndRelease(
+    Project project,
+    uint256 milestoneIndex,
+    string memory evidenceUri
+  ) internal {
+    vm.prank(creator);
+    project.submitMilestone(milestoneIndex, evidenceUri);
+
+    vm.prank(contributor);
+    project.approveMilestone(milestoneIndex);
+
+    project.releaseMilestoneFunds(milestoneIndex);
+  }
+
   function _createProject() internal returns (Project) {
     vm.prank(creator);
     crowdfunding.createProject(
