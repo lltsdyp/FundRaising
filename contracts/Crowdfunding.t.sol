@@ -458,6 +458,87 @@ contract CrowdfundingTest is Test {
     assertEq(project.nextMilestoneIndex(), 3);
   }
 
+  function test_DuplicateMilestoneApprovalReverts() public {
+    Project project = _createSuccessfulMilestoneProject();
+
+    vm.prank(creator);
+    project.submitMilestone(0, "ipfs://prototype");
+
+    vm.prank(contributor);
+    project.approveMilestone(0);
+
+    vm.prank(contributor);
+    vm.expectRevert(bytes("Milestone already approved"));
+    project.approveMilestone(0);
+  }
+
+  function test_ApproveMilestoneBeforeSubmissionReverts() public {
+    Project project = _createSuccessfulMilestoneProject();
+
+    vm.prank(contributor);
+    vm.expectRevert(bytes("Milestone not submitted"));
+    project.approveMilestone(0);
+  }
+
+  function test_SubmitMilestoneOutOfSequenceReverts() public {
+    Project project = _createSuccessfulMilestoneProject();
+
+    vm.prank(creator);
+    vm.expectRevert(bytes("Milestones must be sequential"));
+    project.submitMilestone(1, "ipfs://beta");
+  }
+
+  function test_ReleaseMilestoneOutOfSequenceReverts() public {
+    Project project = _createSuccessfulMilestoneProject();
+
+    vm.prank(creator);
+    project.submitMilestone(0, "ipfs://prototype");
+
+    vm.expectRevert(bytes("Milestones must be sequential"));
+    project.releaseMilestoneFunds(1);
+  }
+
+  function test_NonCreatorCannotSubmitMilestone() public {
+    Project project = _createSuccessfulMilestoneProject();
+
+    vm.prank(contributor);
+    vm.expectRevert(bytes("Only creator"));
+    project.submitMilestone(0, "ipfs://prototype");
+  }
+
+  function test_NonContributorCannotApproveMilestone() public {
+    Project project = _createSuccessfulMilestoneProject();
+
+    vm.prank(creator);
+    project.submitMilestone(0, "ipfs://prototype");
+
+    vm.prank(address(0xD00D));
+    vm.expectRevert(bytes("Only contributors can approve"));
+    project.approveMilestone(0);
+  }
+
+  function test_FailedMilestoneProjectAllowsRefundAndBlocksSubmission() public {
+    Project project = _createMilestoneProject();
+
+    vm.deal(contributor, 5 ether);
+    vm.prank(contributor);
+    crowdfunding.contribute{value: 2 ether}(address(project));
+
+    vm.warp(deadline);
+    project.endProject();
+
+    vm.prank(creator);
+    vm.expectRevert(bytes("Project is not successful"));
+    project.submitMilestone(0, "ipfs://prototype");
+
+    vm.prank(contributor);
+    project.withdrawContribution();
+
+    assertEq(contributor.balance, 5 ether);
+    assertEq(project.contributions(contributor), 0);
+    assertEq(project.getContractBalance(), 0);
+  }
+
   function _createSuccessfulMilestoneProject() internal returns (Project) {
     string[] memory titles = new string[](3);
     titles[0] = "Prototype";
