@@ -10,6 +10,7 @@ contract CrowdfundingTest is Test {
 
   address creator = address(0xA11CE);
   address contributor = address(0xB0B);
+  address contributorTwo = address(0xCAFE);
 
   uint256 minimumContribution = 1 ether;
   uint256 targetContribution = 10 ether;
@@ -72,6 +73,99 @@ contract CrowdfundingTest is Test {
     assertEq(project.contributions(contributor), 5 ether);
     assertEq(project.raisedAmount(), 5 ether);
     assertEq(project.noOfContributors(), 1);
+  }
+
+  function test_GetContributorsReturnsUniqueContributorList() public {
+    Project project = _createProject();
+
+    vm.deal(contributor, 5 ether);
+    vm.deal(contributorTwo, 5 ether);
+
+    vm.prank(contributor);
+    crowdfunding.contribute{value: 2 ether}(address(project));
+
+    vm.prank(contributor);
+    crowdfunding.contribute{value: 1 ether}(address(project));
+
+    vm.prank(contributorTwo);
+    crowdfunding.contribute{value: 3 ether}(address(project));
+
+    address[] memory contributors = project.getContributors();
+
+    assertEq(contributors.length, 2);
+    assertEq(contributors[0], contributor);
+    assertEq(contributors[1], contributorTwo);
+  }
+
+  function test_OngoingAndRemainingTime() public {
+    Project project = _createProject();
+
+    assertTrue(project.isOngoing());
+    assertEq(project.getRemainingTime(), 30 days);
+
+    vm.warp(block.timestamp + 10 days);
+
+    assertTrue(project.isOngoing());
+    assertEq(project.getRemainingTime(), 20 days);
+  }
+
+  function test_ContributionAfterDeadlineReverts() public {
+    Project project = _createProject();
+
+    vm.warp(deadline);
+
+    assertFalse(project.isOngoing());
+    assertEq(project.getRemainingTime(), 0);
+
+    vm.deal(contributor, 1 ether);
+    vm.prank(contributor);
+    vm.expectRevert(bytes("Project is not ongoing"));
+    crowdfunding.contribute{value: 1 ether}(address(project));
+  }
+
+  function test_RefreshStateMarksProjectExpiredAfterDeadline() public {
+    Project project = _createProject();
+
+    vm.warp(deadline);
+
+    project.refreshState();
+
+    assertEq(uint256(project.state()), uint256(Project.State.Expired));
+  }
+
+  function test_GetProjectDetailsReturnsExpiredAfterDeadline() public {
+    Project project = _createProject();
+
+    vm.warp(deadline);
+
+    (, , , , , , , , Project.State currentState, ) = project
+      .getProjectDetails();
+
+    assertEq(uint256(currentState), uint256(Project.State.Expired));
+  }
+
+  function test_ContributionMarksProjectSuccessfulWhenTargetReached() public {
+    Project project = _createProject();
+
+    vm.deal(contributor, targetContribution);
+    vm.prank(contributor);
+    crowdfunding.contribute{value: targetContribution}(address(project));
+
+    assertEq(uint256(project.state()), uint256(Project.State.Successful));
+    assertFalse(project.isOngoing());
+  }
+
+  function test_ContributionAfterSuccessReverts() public {
+    Project project = _createProject();
+
+    vm.deal(contributor, targetContribution);
+    vm.prank(contributor);
+    crowdfunding.contribute{value: targetContribution}(address(project));
+
+    vm.deal(contributorTwo, minimumContribution);
+    vm.prank(contributorTwo);
+    vm.expectRevert(bytes("Project is not ongoing"));
+    crowdfunding.contribute{value: minimumContribution}(address(project));
   }
 
   function test_ContributionBelowMinimumReverts() public {

@@ -65,9 +65,7 @@ contract Crowdfunding {
     Project project = Project(projectAddress);
 
     uint256 minContributionAmount = project.minimumContribution();
-    Project.State projectState = project.state();
-
-    require(projectState == Project.State.Fundraising, "Invalid state");
+    require(project.isOngoing(), "Project is not ongoing");
     require(msg.value >= minContributionAmount, "Contribution amount is too low !");
 
     project.contribute{value: msg.value}(msg.sender);

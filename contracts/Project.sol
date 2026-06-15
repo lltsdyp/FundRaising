@@ -19,12 +19,15 @@ contract Project {
   State public state = State.Fundraising;
 
   mapping(address contributor => uint256 amount) public contributions;
+  address[] private contributors;
 
   event FundingReceived(
     address indexed contributor,
     uint256 amount,
     uint256 currentTotal
   );
+
+  event StateChanged(State previousState, State newState);
 
   constructor(
     address _creator,
@@ -49,22 +52,66 @@ contract Project {
   }
 
   function contribute(address _contributor) external payable {
-    require(state == State.Fundraising, "Invalid state");
+    refreshState();
+
+    require(state == State.Fundraising, "Project is not ongoing");
     require(_contributor != address(0), "Invalid contributor");
     require(msg.value >= minimumContribution, "Contribution amount is too low !");
 
     if (contributions[_contributor] == 0) {
+      contributors.push(_contributor);
       noOfContributors++;
     }
 
     contributions[_contributor] += msg.value;
     raisedAmount += msg.value;
+    refreshState();
 
     emit FundingReceived(_contributor, msg.value, raisedAmount);
   }
 
   function getContractBalance() external view returns (uint256) {
     return address(this).balance;
+  }
+
+  function getContributors() external view returns (address[] memory) {
+    return contributors;
+  }
+
+  function getCurrentState() public view returns (State) {
+    if (raisedAmount >= targetContribution) {
+      return State.Successful;
+    }
+
+    if (block.timestamp >= deadline) {
+      return State.Expired;
+    }
+
+    return State.Fundraising;
+  }
+
+  function refreshState() public returns (State) {
+    State currentState = getCurrentState();
+
+    if (currentState != state) {
+      State previousState = state;
+      state = currentState;
+      emit StateChanged(previousState, currentState);
+    }
+
+    return state;
+  }
+
+  function isOngoing() public view returns (bool) {
+    return getCurrentState() == State.Fundraising;
+  }
+
+  function getRemainingTime() public view returns (uint256) {
+    if (block.timestamp >= deadline) {
+      return 0;
+    }
+
+    return deadline - block.timestamp;
   }
 
   function getProjectDetails()
@@ -91,7 +138,7 @@ contract Project {
     contributorCount = noOfContributors;
     title = projectTitle;
     desc = projectDesc;
-    currentState = state;
+    currentState = getCurrentState();
     balance = address(this).balance;
   }
 }
