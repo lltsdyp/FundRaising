@@ -32,6 +32,13 @@ npm run dev
 The app connects to MetaMask, lists projects from the Crowdfunding contract, and
 lets users create projects, donate, and withdraw or refund after the deadline.
 
+## Project Types
+
+MyFundings supports two funding models:
+
+- **All or nothing:** contributors fund until the deadline. If the project reaches the target, the creator withdraws the full balance. If it misses the target, contributors refund their own contribution.
+- **Milestone release:** contributors fund until the deadline. If the project reaches the target, the creator submits each milestone result, contributors verify it, and the contract releases that milestone's percentage of the raised funds. Milestone approval is weighted by contribution amount and requires 50% of the raised amount.
+
 ### Running Tests
 
 To run all the tests in the project, execute the following command:
