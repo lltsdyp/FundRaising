@@ -381,9 +381,7 @@ contract CrowdfundingTest is Test {
     );
   }
 
-  function test_CreatorCannotWithdrawMilestoneFundsThroughAllOrNothingPath()
-    public
-  {
+  function test_MilestoneCreatorCannotWithdrawAllFundsAtOnce() public {
     Project project = _createMilestoneProject();
 
     vm.deal(contributor, targetContribution);
@@ -498,7 +496,7 @@ contract CrowdfundingTest is Test {
     project.releaseMilestoneFunds(1);
   }
 
-  function test_NonCreatorCannotSubmitMilestone() public {
+  function test_OnlyCreatorCanSubmitMilestone() public {
     Project project = _createSuccessfulMilestoneProject();
 
     vm.prank(contributor);
@@ -536,6 +534,41 @@ contract CrowdfundingTest is Test {
 
     assertEq(contributor.balance, 5 ether);
     assertEq(project.contributions(contributor), 0);
+    assertEq(project.getContractBalance(), 0);
+  }
+
+  function test_MilestoneProjectRefundsWhenTargetNotReached() public {
+    string[] memory titles = new string[](1);
+    titles[0] = "Launch";
+
+    uint16[] memory releaseBps = new uint16[](1);
+    releaseBps[0] = 10_000;
+
+    vm.prank(creator);
+    crowdfunding.createMilestoneProject(
+      minimumContribution,
+      deadline,
+      targetContribution,
+      "Milestone fund",
+      "Stage based release",
+      titles,
+      releaseBps
+    );
+
+    Project[] memory projects = crowdfunding.returnAllProjects();
+    Project project = projects[0];
+
+    vm.deal(contributor, 5 ether);
+    vm.prank(contributor);
+    crowdfunding.contribute{value: 2 ether}(address(project));
+
+    vm.warp(deadline);
+    project.endProject();
+
+    vm.prank(contributor);
+    project.withdrawContribution();
+
+    assertEq(contributor.balance, 5 ether);
     assertEq(project.getContractBalance(), 0);
   }
 
