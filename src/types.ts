@@ -1,6 +1,11 @@
 import type { Address } from "viem";
 import type { ProjectState } from "./utils";
 
+export enum FundingModel {
+  AllOrNothing = 0,
+  Milestone = 1,
+}
+
 export type WalletSession = {
   address: Address;
   chainId: number;
@@ -9,6 +14,18 @@ export type WalletSession = {
 export type ProjectContribution = {
   contributor: Address;
   amount: bigint;
+};
+
+export type ProjectMilestone = {
+  index: number;
+  title: string;
+  evidenceUri: string;
+  releaseBps: number;
+  approvalWeight: bigint;
+  submitted: boolean;
+  released: boolean;
+  releasedAmount: bigint;
+  approved: boolean;
 };
 
 export type FundingProject = {
@@ -27,6 +44,10 @@ export type FundingProject = {
   contributors: ProjectContribution[];
   userContribution: bigint;
   creatorWithdrawn: boolean;
+  fundingModel: FundingModel;
+  nextMilestoneIndex: bigint;
+  totalReleasedAmount: bigint;
+  milestones: ProjectMilestone[];
 };
 
 export type CreateProjectInput = {
@@ -35,4 +56,9 @@ export type CreateProjectInput = {
   goalEth: string;
   minimumEth: string;
   deadlineUnixSeconds: number;
+  fundingModel: FundingModel;
+  milestones: Array<{
+    title: string;
+    releaseBps: number;
+  }>;
 };

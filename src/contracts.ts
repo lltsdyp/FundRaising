@@ -7,7 +7,13 @@ import {
   type EIP1193Provider,
 } from "viem";
 import { crowdfundingAbi, projectAbi } from "./abi";
-import type { CreateProjectInput, FundingProject, WalletSession } from "./types";
+import {
+  FundingModel,
+  type CreateProjectInput,
+  type FundingProject,
+  type ProjectMilestone,
+  type WalletSession,
+} from "./types";
 import { ProjectState } from "./utils";
 
 export const DEFAULT_CROWDFUNDING_ADDRESS: Address =
@@ -18,6 +24,9 @@ export const GANACHE_TRANSACTION_GAS_CAP = 16_777_216n;
 export const WRITE_GAS_LIMITS = {
   createProject: 2_500_000n,
   contribute: 300_000n,
+  submitMilestone: 200_000n,
+  approveMilestone: 200_000n,
+  releaseMilestoneFunds: 250_000n,
   withdrawContribution: 200_000n,
   withdrawRaisedFunds: 200_000n,
 } as const;
@@ -108,29 +117,57 @@ export async function loadProject(
   account?: Address,
 ): Promise<FundingProject> {
   const publicClient = getPublicClient();
-  const [details, remainingTime, contributors, creatorWithdrawn] =
-    await Promise.all([
-      publicClient.readContract({
-        address: projectAddress,
-        abi: projectAbi,
-        functionName: "getProjectDetails",
-      }),
-      publicClient.readContract({
-        address: projectAddress,
-        abi: projectAbi,
-        functionName: "getRemainingTime",
-      }),
-      publicClient.readContract({
-        address: projectAddress,
-        abi: projectAbi,
-        functionName: "getContributors",
-      }),
-      publicClient.readContract({
-        address: projectAddress,
-        abi: projectAbi,
-        functionName: "creatorWithdrawn",
-      }),
-    ]);
+  const [
+    details,
+    remainingTime,
+    contributors,
+    creatorWithdrawn,
+    fundingModel,
+    nextMilestoneIndex,
+    totalReleasedAmount,
+    milestoneCount,
+  ] = await Promise.all([
+    publicClient.readContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "getProjectDetails",
+    }),
+    publicClient.readContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "getRemainingTime",
+    }),
+    publicClient.readContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "getContributors",
+    }),
+    publicClient.readContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "creatorWithdrawn",
+    }),
+    publicClient.readContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "fundingModel",
+    }),
+    publicClient.readContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "nextMilestoneIndex",
+    }),
+    publicClient.readContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "totalReleasedAmount",
+    }),
+    publicClient.readContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "getMilestoneCount",
+    }),
+  ]);
 
   const contributionRows = await Promise.all(
     contributors.map(async (contributor) => ({
@@ -153,6 +190,44 @@ export async function loadProject(
       })
     : 0n;
 
+  const milestoneIndexes = Array.from(
+    { length: Number(milestoneCount) },
+    (_, index) => BigInt(index),
+  );
+
+  const milestones: ProjectMilestone[] = await Promise.all(
+    milestoneIndexes.map(async (milestoneIndex) => {
+      const [milestone, approved] = await Promise.all([
+        publicClient.readContract({
+          address: projectAddress,
+          abi: projectAbi,
+          functionName: "getMilestone",
+          args: [milestoneIndex],
+        }),
+        account
+          ? publicClient.readContract({
+              address: projectAddress,
+              abi: projectAbi,
+              functionName: "milestoneApprovals",
+              args: [milestoneIndex, account],
+            })
+          : Promise.resolve(false),
+      ]);
+
+      return {
+        index: Number(milestoneIndex),
+        title: milestone[0],
+        evidenceUri: milestone[1],
+        releaseBps: Number(milestone[2]),
+        approvalWeight: milestone[3],
+        submitted: milestone[4],
+        released: milestone[5],
+        releasedAmount: milestone[6],
+        approved,
+      };
+    }),
+  );
+
   return {
     address: projectAddress,
     creator: details[0],
@@ -169,6 +244,10 @@ export async function loadProject(
     contributors: contributionRows,
     userContribution,
     creatorWithdrawn,
+    fundingModel: Number(fundingModel) as FundingModel,
+    nextMilestoneIndex,
+    totalReleasedAmount,
+    milestones,
   };
 }
 
@@ -178,21 +257,38 @@ export async function createProject(
 ) {
   const { walletClient, account } = await getWalletClient();
   const publicClient = getPublicClient();
-  const hash = await walletClient.writeContract({
-    address: crowdfundingAddress,
-    abi: crowdfundingAbi,
-    functionName: "createProject",
-    account,
-    chain: null,
-    gas: WRITE_GAS_LIMITS.createProject,
-    args: [
-      parseEther(input.minimumEth),
-      BigInt(input.deadlineUnixSeconds),
-      parseEther(input.goalEth),
-      input.title,
-      input.description,
-    ],
-  });
+  const baseArgs = [
+    parseEther(input.minimumEth),
+    BigInt(input.deadlineUnixSeconds),
+    parseEther(input.goalEth),
+    input.title,
+    input.description,
+  ] as const;
+
+  const hash =
+    input.fundingModel === FundingModel.Milestone
+      ? await walletClient.writeContract({
+          address: crowdfundingAddress,
+          abi: crowdfundingAbi,
+          functionName: "createMilestoneProject",
+          account,
+          chain: null,
+          gas: WRITE_GAS_LIMITS.createProject,
+          args: [
+            ...baseArgs,
+            input.milestones.map((milestone) => milestone.title),
+            input.milestones.map((milestone) => milestone.releaseBps),
+          ],
+        })
+      : await walletClient.writeContract({
+          address: crowdfundingAddress,
+          abi: crowdfundingAbi,
+          functionName: "createProject",
+          account,
+          chain: null,
+          gas: WRITE_GAS_LIMITS.createProject,
+          args: baseArgs,
+        });
 
   await publicClient.waitForTransactionReceipt({ hash });
   return hash;
@@ -246,6 +342,67 @@ export async function withdrawContribution(projectAddress: Address) {
     account,
     chain: null,
     gas: WRITE_GAS_LIMITS.withdrawContribution,
+  });
+
+  await publicClient.waitForTransactionReceipt({ hash });
+  return hash;
+}
+
+export async function submitMilestone(
+  projectAddress: Address,
+  milestoneIndex: number,
+  evidenceUri: string,
+) {
+  const { walletClient, account } = await getWalletClient();
+  const publicClient = getPublicClient();
+  const hash = await walletClient.writeContract({
+    address: projectAddress,
+    abi: projectAbi,
+    functionName: "submitMilestone",
+    account,
+    chain: null,
+    gas: WRITE_GAS_LIMITS.submitMilestone,
+    args: [BigInt(milestoneIndex), evidenceUri],
+  });
+
+  await publicClient.waitForTransactionReceipt({ hash });
+  return hash;
+}
+
+export async function approveMilestone(
+  projectAddress: Address,
+  milestoneIndex: number,
+) {
+  const { walletClient, account } = await getWalletClient();
+  const publicClient = getPublicClient();
+  const hash = await walletClient.writeContract({
+    address: projectAddress,
+    abi: projectAbi,
+    functionName: "approveMilestone",
+    account,
+    chain: null,
+    gas: WRITE_GAS_LIMITS.approveMilestone,
+    args: [BigInt(milestoneIndex)],
+  });
+
+  await publicClient.waitForTransactionReceipt({ hash });
+  return hash;
+}
+
+export async function releaseMilestoneFunds(
+  projectAddress: Address,
+  milestoneIndex: number,
+) {
+  const { walletClient, account } = await getWalletClient();
+  const publicClient = getPublicClient();
+  const hash = await walletClient.writeContract({
+    address: projectAddress,
+    abi: projectAbi,
+    functionName: "releaseMilestoneFunds",
+    account,
+    chain: null,
+    gas: WRITE_GAS_LIMITS.releaseMilestoneFunds,
+    args: [BigInt(milestoneIndex)],
   });
 
   await publicClient.waitForTransactionReceipt({ hash });

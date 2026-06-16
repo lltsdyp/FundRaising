@@ -4,9 +4,12 @@ import {
   formatAddress,
   formatDeadline,
   formatEth,
+  getFundingModelLabel,
   getFundingProgress,
   getLiveProjectState,
   getLiveRemainingTime,
+  getMilestoneApprovalProgress,
+  getMilestoneFormError,
   getProjectPhase,
   getReadableErrorMessage,
   parseDeadlineToUnixSeconds,
@@ -23,6 +26,33 @@ describe("frontend utility behavior", () => {
     expect(getFundingProgress(4n, 10n)).toBe(40);
     expect(getFundingProgress(12n, 10n)).toBe(100);
     expect(getFundingProgress(1n, 0n)).toBe(0);
+  });
+
+  it("formats funding models for project rows", () => {
+    expect(getFundingModelLabel(0)).toBe("All or nothing");
+    expect(getFundingModelLabel(1)).toBe("里程碑释放");
+  });
+
+  it("calculates milestone approval progress", () => {
+    expect(getMilestoneApprovalProgress(5n, 10n)).toBe(100);
+    expect(getMilestoneApprovalProgress(2n, 10n)).toBe(40);
+    expect(getMilestoneApprovalProgress(1n, 0n)).toBe(0);
+  });
+
+  it("validates milestone percentages sum to one hundred percent", () => {
+    expect(
+      getMilestoneFormError([
+        { title: "Prototype", releaseBps: 2_500 },
+        { title: "Launch", releaseBps: 7_500 },
+      ]),
+    ).toBe("");
+
+    expect(
+      getMilestoneFormError([
+        { title: "Prototype", releaseBps: 2_500 },
+        { title: "Launch", releaseBps: 5_000 },
+      ]),
+    ).toBe("里程碑释放比例合计必须等于 100%");
   });
 
   it("derives project phase from contract state and deadline", () => {

@@ -1,23 +1,34 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { isAddress, parseEther, type Address } from "viem";
 import {
+  approveMilestone,
   connectWallet,
   contributeToProject,
   createProject,
   getInitialCrowdfundingAddress,
   loadProjects,
+  releaseMilestoneFunds,
+  submitMilestone,
   withdrawContribution,
   withdrawRaisedFunds,
 } from "./contracts";
-import type { CreateProjectInput, FundingProject, WalletSession } from "./types";
+import {
+  FundingModel,
+  type CreateProjectInput,
+  type FundingProject,
+  type WalletSession,
+} from "./types";
 import {
   ProjectState,
   formatAddress,
   formatDeadline,
   formatEth,
+  getFundingModelLabel,
   getFundingProgress,
   getLiveProjectState,
   getLiveRemainingTime,
+  getMilestoneApprovalProgress,
+  getMilestoneFormError,
   getProjectPhase,
   getReadableErrorMessage,
   normalizeAddress,
@@ -32,6 +43,11 @@ const defaultCreateForm = {
   goalEth: "10",
   minimumEth: "0.01",
   deadline: "",
+  fundingModel: FundingModel.AllOrNothing,
+  milestones: [
+    { title: "Prototype", percentage: "25" },
+    { title: "Launch", percentage: "75" },
+  ],
 };
 
 function App() {
@@ -191,12 +207,29 @@ function App() {
       return;
     }
 
+    const milestones = createForm.milestones.map((milestone) => ({
+      title: milestone.title.trim(),
+      releaseBps: Math.round(Number(milestone.percentage) * 100),
+    }));
+
+    if (createForm.fundingModel === FundingModel.Milestone) {
+      const milestoneError = getMilestoneFormError(milestones);
+
+      if (milestoneError) {
+        setError(milestoneError);
+        return;
+      }
+    }
+
     const input: CreateProjectInput = {
       title: createForm.title.trim(),
       description: createForm.description.trim(),
       goalEth: createForm.goalEth,
       minimumEth: createForm.minimumEth,
       deadlineUnixSeconds: parseDeadlineToUnixSeconds(createForm.deadline),
+      fundingModel: createForm.fundingModel,
+      milestones:
+        createForm.fundingModel === FundingModel.Milestone ? milestones : [],
     };
 
     await runAction(async () => {
@@ -312,6 +345,37 @@ function App() {
                   "退款已回收",
                 )
               }
+              onSubmitMilestone={(milestoneIndex, evidenceUri) =>
+                runAction(
+                  async () => {
+                    await submitMilestone(
+                      selectedProject.address,
+                      milestoneIndex,
+                      evidenceUri,
+                    );
+                  },
+                  "里程碑成果已提交",
+                )
+              }
+              onApproveMilestone={(milestoneIndex) =>
+                runAction(
+                  async () => {
+                    await approveMilestone(selectedProject.address, milestoneIndex);
+                  },
+                  "里程碑验证已提交",
+                )
+              }
+              onReleaseMilestone={(milestoneIndex) =>
+                runAction(
+                  async () => {
+                    await releaseMilestoneFunds(
+                      selectedProject.address,
+                      milestoneIndex,
+                    );
+                  },
+                  "里程碑资金已释放",
+                )
+              }
             />
           )}
         </>
@@ -405,6 +469,9 @@ export function ProjectList({
                   <div className="project-row-status">
                     <span className={`state-badge state-${liveState}`}>
                       {getProjectPhase(liveState, liveRemainingTime)}
+                    </span>
+                    <span className="muted">
+                      {getFundingModelLabel(project.fundingModel)}
                     </span>
                     <span className="muted">{formatDeadline(liveRemainingTime)}</span>
                   </div>
@@ -506,6 +573,104 @@ function CreateProjectView({
             onChange={(event) => onChange({ ...form, deadline: event.target.value })}
           />
         </label>
+        <fieldset className="mode-fieldset">
+          <legend>资金释放方式</legend>
+          <label className="radio-row">
+            <input
+              checked={form.fundingModel === FundingModel.AllOrNothing}
+              type="radio"
+              name="fundingModel"
+              onChange={() =>
+                onChange({ ...form, fundingModel: FundingModel.AllOrNothing })
+              }
+            />
+            <span>All or nothing，到期达标后一次性提款</span>
+          </label>
+          <label className="radio-row">
+            <input
+              checked={form.fundingModel === FundingModel.Milestone}
+              type="radio"
+              name="fundingModel"
+              onChange={() =>
+                onChange({ ...form, fundingModel: FundingModel.Milestone })
+              }
+            />
+            <span>里程碑释放，捐赠者验证后分阶段提款</span>
+          </label>
+        </fieldset>
+
+        {form.fundingModel === FundingModel.Milestone && (
+          <div className="milestone-editor">
+            <div className="section-heading compact">
+              <h3>里程碑</h3>
+              <button
+                type="button"
+                onClick={() =>
+                  onChange({
+                    ...form,
+                    milestones: [
+                      ...form.milestones,
+                      { title: "", percentage: "10" },
+                    ],
+                  })
+                }
+              >
+                添加阶段
+              </button>
+            </div>
+            {form.milestones.map((milestone, index) => (
+              <div className="milestone-form-row" key={index}>
+                <label>
+                  阶段名称
+                  <input
+                    required
+                    value={milestone.title}
+                    onChange={(event) => {
+                      const milestones = [...form.milestones];
+                      milestones[index] = {
+                        ...milestone,
+                        title: event.target.value,
+                      };
+                      onChange({ ...form, milestones });
+                    }}
+                  />
+                </label>
+                <label>
+                  释放比例 %
+                  <input
+                    required
+                    min="0.01"
+                    step="0.01"
+                    type="number"
+                    value={milestone.percentage}
+                    onChange={(event) => {
+                      const milestones = [...form.milestones];
+                      milestones[index] = {
+                        ...milestone,
+                        percentage: event.target.value,
+                      };
+                      onChange({ ...form, milestones });
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={form.milestones.length === 1}
+                  onClick={() =>
+                    onChange({
+                      ...form,
+                      milestones: form.milestones.filter(
+                        (_, milestoneIndex) => milestoneIndex !== index,
+                      ),
+                    })
+                  }
+                >
+                  移除
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <button className="primary-button" type="submit" disabled={loading}>
           提交到链上
         </button>
@@ -525,6 +690,9 @@ export function ProjectDetail({
   onContribute,
   onWithdrawCreator,
   onWithdrawContribution,
+  onSubmitMilestone,
+  onApproveMilestone,
+  onReleaseMilestone,
 }: {
   account: Address;
   contributionAmount: string;
@@ -536,7 +704,11 @@ export function ProjectDetail({
   onContribute: (event: FormEvent<HTMLFormElement>) => void;
   onWithdrawCreator: () => void;
   onWithdrawContribution: () => void;
+  onSubmitMilestone: (milestoneIndex: number, evidenceUri: string) => void;
+  onApproveMilestone: (milestoneIndex: number) => void;
+  onReleaseMilestone: (milestoneIndex: number) => void;
 }) {
+  const [evidenceUri, setEvidenceUri] = useState("");
   const isCreator = normalizeAddress(account) === normalizeAddress(project.creator);
   const liveRemainingTime = getLiveRemainingTime(project.deadline, nowSeconds);
   const liveState = getLiveProjectState({
@@ -549,6 +721,7 @@ export function ProjectDetail({
   const isFundraising =
     liveState === ProjectState.Fundraising && liveRemainingTime > 0n;
   const canCreatorWithdraw =
+    project.fundingModel === FundingModel.AllOrNothing &&
     liveState === ProjectState.Successful &&
     isCreator &&
     !project.creatorWithdrawn &&
@@ -562,6 +735,12 @@ export function ProjectDetail({
     parsedContributionAmount,
   });
   const canSubmitContribution = !loading && !contributionValidationMessage;
+  const activeMilestone = project.milestones.find(
+    (milestone) => BigInt(milestone.index) === project.nextMilestoneIndex,
+  );
+  const canUseMilestones =
+    project.fundingModel === FundingModel.Milestone &&
+    liveState === ProjectState.Successful;
 
   function handleContributionSubmit(event: FormEvent<HTMLFormElement>) {
     if (!canSubmitContribution) {
@@ -649,15 +828,21 @@ export function ProjectDetail({
               <h3>筹款已结束</h3>
               {liveState === ProjectState.Successful && (
                 <>
-                  <p>项目已达成目标，发起人可提取合约余额。</p>
-                  <button
-                    className="primary-button"
-                    type="button"
-                    disabled={!canCreatorWithdraw || loading}
-                    onClick={onWithdrawCreator}
-                  >
-                    发起人提款
-                  </button>
+                  <p>
+                    {project.fundingModel === FundingModel.Milestone
+                      ? "项目已达成目标，资金将按里程碑验证结果释放。"
+                      : "项目已达成目标，发起人可提取合约余额。"}
+                  </p>
+                  {project.fundingModel === FundingModel.AllOrNothing && (
+                    <button
+                      className="primary-button"
+                      type="button"
+                      disabled={!canCreatorWithdraw || loading}
+                      onClick={onWithdrawCreator}
+                    >
+                      发起人提款
+                    </button>
+                  )}
                 </>
               )}
               {liveState === ProjectState.Expired && (
@@ -677,6 +862,109 @@ export function ProjectDetail({
           )}
         </aside>
       </div>
+
+      {project.fundingModel === FundingModel.Milestone && (
+        <section className="contributors">
+          <div className="section-heading compact">
+            <h3>里程碑释放</h3>
+            <span>
+              已释放 {formatEth(project.totalReleasedAmount)} /{" "}
+              {formatEth(project.raisedAmount)}
+            </span>
+          </div>
+
+          {canUseMilestones &&
+            activeMilestone &&
+            isCreator &&
+            !activeMilestone.submitted && (
+              <form
+                className="milestone-submit"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (evidenceUri.trim()) {
+                    onSubmitMilestone(activeMilestone.index, evidenceUri.trim());
+                    setEvidenceUri("");
+                  }
+                }}
+              >
+                <label>
+                  当前阶段成果链接
+                  <input
+                    required
+                    value={evidenceUri}
+                    onChange={(event) => setEvidenceUri(event.target.value)}
+                    placeholder="ipfs://... 或 https://..."
+                  />
+                </label>
+                <button className="primary-button" type="submit" disabled={loading}>
+                  提交成果
+                </button>
+              </form>
+            )}
+
+          <div className="milestone-list">
+            {project.milestones.map((milestone) => {
+              const approvalProgress = getMilestoneApprovalProgress(
+                milestone.approvalWeight,
+                project.raisedAmount,
+              );
+              const isActive =
+                BigInt(milestone.index) === project.nextMilestoneIndex;
+              const canApprove =
+                canUseMilestones &&
+                isActive &&
+                milestone.submitted &&
+                !milestone.released &&
+                project.userContribution > 0n &&
+                !milestone.approved;
+              const canRelease =
+                canUseMilestones &&
+                isActive &&
+                milestone.submitted &&
+                !milestone.released &&
+                approvalProgress >= 100;
+
+              return (
+                <article className="milestone-row" key={milestone.index}>
+                  <div>
+                    <strong>{milestone.title}</strong>
+                    <span>{milestone.releaseBps / 100}%</span>
+                  </div>
+                  <p>
+                    {milestone.released
+                      ? `已释放 ${formatEth(milestone.releasedAmount)}`
+                      : milestone.submitted
+                        ? `验证进度 ${approvalProgress}%`
+                        : "等待提交成果"}
+                  </p>
+                  {milestone.evidenceUri && (
+                    <a href={milestone.evidenceUri} target="_blank" rel="noreferrer">
+                      查看成果
+                    </a>
+                  )}
+                  <div className="button-row">
+                    <button
+                      type="button"
+                      disabled={!canApprove || loading}
+                      onClick={() => onApproveMilestone(milestone.index)}
+                    >
+                      验证
+                    </button>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      disabled={!canRelease || loading}
+                      onClick={() => onReleaseMilestone(milestone.index)}
+                    >
+                      释放资金
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <section className="contributors">
         <div className="section-heading compact">

@@ -6,7 +6,7 @@ import {
   DEFAULT_CROWDFUNDING_ADDRESS,
   getInitialCrowdfundingAddress,
 } from "./contracts";
-import type { FundingProject } from "./types";
+import { FundingModel, type FundingProject } from "./types";
 import { ProjectState } from "./utils";
 
 const sampleProject: FundingProject = {
@@ -25,6 +25,10 @@ const sampleProject: FundingProject = {
   contributors: [],
   userContribution: 0n,
   creatorWithdrawn: false,
+  fundingModel: FundingModel.AllOrNothing,
+  nextMilestoneIndex: 0n,
+  totalReleasedAmount: 0n,
+  milestones: [],
 };
 
 describe("App presentation components", () => {
@@ -81,6 +85,48 @@ describe("App presentation components", () => {
     host.remove();
   });
 
+  it("labels milestone projects in the project list", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    act(() => {
+      root.render(
+        <ProjectList
+          projects={[
+            {
+              ...sampleProject,
+              fundingModel: FundingModel.Milestone,
+              milestones: [
+                {
+                  index: 0,
+                  title: "Prototype",
+                  evidenceUri: "",
+                  releaseBps: 2_500,
+                  approvalWeight: 0n,
+                  submitted: false,
+                  released: false,
+                  releasedAmount: 0n,
+                  approved: false,
+                },
+              ],
+            },
+          ]}
+          canLoad
+          nowSeconds={1_000}
+          onRefresh={() => undefined}
+          onCreate={() => undefined}
+          onOpen={() => undefined}
+        />,
+      );
+    });
+
+    expect(host.textContent).toContain("里程碑释放");
+
+    act(() => root.unmount());
+    host.remove();
+  });
+
   it("disables contribution when the amount is below the project minimum", () => {
     const host = document.createElement("div");
     document.body.append(host);
@@ -99,6 +145,9 @@ describe("App presentation components", () => {
           onContribute={() => undefined}
           onWithdrawCreator={() => undefined}
           onWithdrawContribution={() => undefined}
+          onSubmitMilestone={() => undefined}
+          onApproveMilestone={() => undefined}
+          onReleaseMilestone={() => undefined}
         />,
       );
     });
@@ -132,6 +181,9 @@ describe("App presentation components", () => {
           onContribute={() => undefined}
           onWithdrawCreator={() => undefined}
           onWithdrawContribution={() => undefined}
+          onSubmitMilestone={() => undefined}
+          onApproveMilestone={() => undefined}
+          onReleaseMilestone={() => undefined}
         />,
       );
     });
@@ -141,6 +193,64 @@ describe("App presentation components", () => {
     );
 
     expect(donateButton?.disabled).toBe(false);
+
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("renders milestone verification actions for successful milestone projects", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    act(() => {
+      root.render(
+        <ProjectDetail
+          account="0x3333333333333333333333333333333333333333"
+          contributionAmount="0.01"
+          loading={false}
+          nowSeconds={2_000}
+          project={{
+            ...sampleProject,
+            state: ProjectState.Successful,
+            deadline: 1_000n,
+            fundingModel: FundingModel.Milestone,
+            userContribution: 1_000_000_000_000_000_000n,
+            nextMilestoneIndex: 0n,
+            milestones: [
+              {
+                index: 0,
+                title: "Prototype",
+                evidenceUri: "ipfs://prototype",
+                releaseBps: 2_500,
+                approvalWeight: 0n,
+                submitted: true,
+                released: false,
+                releasedAmount: 0n,
+                approved: false,
+              },
+            ],
+          }}
+          onBack={() => undefined}
+          onContributionAmountChange={() => undefined}
+          onContribute={() => undefined}
+          onWithdrawCreator={() => undefined}
+          onWithdrawContribution={() => undefined}
+          onSubmitMilestone={() => undefined}
+          onApproveMilestone={() => undefined}
+          onReleaseMilestone={() => undefined}
+        />,
+      );
+    });
+
+    expect(host.textContent).toContain("里程碑释放");
+    expect(host.textContent).toContain("Prototype");
+    expect(host.textContent).toContain("验证进度 0%");
+
+    const approveButton = Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent === "验证",
+    );
+    expect(approveButton?.disabled).toBe(false);
 
     act(() => root.unmount());
     host.remove();

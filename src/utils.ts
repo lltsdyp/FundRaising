@@ -25,6 +25,55 @@ export function getFundingProgress(raisedAmount: bigint, targetAmount: bigint) {
   return Math.min(100, Math.round(basisPoints) / 100);
 }
 
+export function getFundingModelLabel(model: number) {
+  return model === 1 ? "里程碑释放" : "All or nothing";
+}
+
+export function getMilestoneApprovalProgress(
+  approvalWeight: bigint,
+  raisedAmount: bigint,
+) {
+  if (raisedAmount <= 0n) {
+    return 0;
+  }
+
+  const requiredWeight = (raisedAmount * 5_000n) / 10_000n;
+
+  if (requiredWeight <= 0n) {
+    return 0;
+  }
+
+  const basisPoints = Number((approvalWeight * 10_000n) / requiredWeight);
+  return Math.min(100, Math.round(basisPoints) / 100);
+}
+
+export function getMilestoneFormError(
+  milestones: Array<{ title: string; releaseBps: number }>,
+) {
+  if (milestones.length === 0) {
+    return "请至少设置一个里程碑";
+  }
+
+  if (milestones.some((milestone) => milestone.title.trim().length === 0)) {
+    return "里程碑名称不能为空";
+  }
+
+  if (milestones.some((milestone) => milestone.releaseBps <= 0)) {
+    return "每个里程碑释放比例必须大于 0";
+  }
+
+  const totalBps = milestones.reduce(
+    (sum, milestone) => sum + milestone.releaseBps,
+    0,
+  );
+
+  if (totalBps !== 10_000) {
+    return "里程碑释放比例合计必须等于 100%";
+  }
+
+  return "";
+}
+
 export function getProjectPhase(state: ProjectState, remainingTime: bigint) {
   if (state === ProjectState.Successful) {
     return "已成功";
