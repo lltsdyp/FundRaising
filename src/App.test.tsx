@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ProjectDetail, ProjectList, ToastStack } from "./App";
 import {
   DEFAULT_CROWDFUNDING_ADDRESS,
@@ -56,6 +56,30 @@ describe("App presentation components", () => {
 
     act(() => root.unmount());
     host.remove();
+  });
+
+  it("keeps loading messages while work is still pending", () => {
+    vi.useFakeTimers();
+
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    act(() => {
+      root.render(<ToastStack loading message="" error="" />);
+    });
+
+    expect(host.textContent).toContain("交易或读取处理中");
+
+    act(() => {
+      vi.advanceTimersByTime(2_800);
+    });
+
+    expect(host.textContent).toContain("交易或读取处理中");
+
+    act(() => root.unmount());
+    host.remove();
+    vi.useRealTimers();
   });
 
   it("renders projects as list rows instead of cards", () => {
@@ -193,6 +217,76 @@ describe("App presentation components", () => {
     );
 
     expect(donateButton?.disabled).toBe(false);
+
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("shows submit form for second milestone after first is released", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    act(() => {
+      root.render(
+        <ProjectDetail
+          account="0x2222222222222222222222222222222222222222"
+          contributionAmount="0.01"
+          loading={false}
+          nowSeconds={3_000}
+          project={{
+            ...sampleProject,
+            creator: "0x2222222222222222222222222222222222222222",
+            state: ProjectState.Successful,
+            deadline: 1_000n,
+            fundingModel: FundingModel.Milestone,
+            raisedAmount: 10_000_000_000_000_000_000n,
+            targetContribution: 10_000_000_000_000_000_000n,
+            balance: 7_500_000_000_000_000_000n,
+            totalReleasedAmount: 2_500_000_000_000_000_000n,
+            nextMilestoneIndex: 1n,
+            milestones: [
+              {
+                index: 0,
+                title: "Prototype",
+                evidenceUri: "ipfs://prototype",
+                releaseBps: 2_500,
+                approvalWeight: 10_000_000_000_000_000_000n,
+                submitted: true,
+                released: true,
+                releasedAmount: 2_500_000_000_000_000_000n,
+                approved: false,
+              },
+              {
+                index: 1,
+                title: "Launch",
+                evidenceUri: "",
+                releaseBps: 7_500,
+                approvalWeight: 0n,
+                submitted: false,
+                released: false,
+                releasedAmount: 0n,
+                approved: false,
+              },
+            ],
+          }}
+          onBack={() => undefined}
+          onContributionAmountChange={() => undefined}
+          onContribute={() => undefined}
+          onWithdrawCreator={() => undefined}
+          onWithdrawContribution={() => undefined}
+          onSubmitMilestone={() => undefined}
+          onApproveMilestone={() => undefined}
+          onReleaseMilestone={() => undefined}
+        />,
+      );
+    });
+
+    const submitButton = Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent === "提交成果",
+    );
+    expect(submitButton).not.toBeUndefined();
+    expect(submitButton?.disabled).toBe(false);
 
     act(() => root.unmount());
     host.remove();

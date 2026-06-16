@@ -36,6 +36,7 @@ import {
 } from "./utils";
 
 type View = "list" | "create" | "detail";
+const TOAST_AUTO_DISMISS_MS = 2_800;
 
 const defaultCreateForm = {
   title: "",
@@ -86,7 +87,7 @@ function App() {
 
     const timer = window.setTimeout(() => {
       setMessage("");
-    }, 2_800);
+    }, TOAST_AUTO_DISMISS_MS);
 
     return () => window.clearTimeout(timer);
   }, [message]);
@@ -142,27 +143,16 @@ function App() {
     try {
       await action();
       setMessage(successMessage);
-      if (hasValidContract) {
-        await refreshProjects(crowdfundingAddress as Address);
-      }
     } catch (caught) {
-      const actionErrorMessage = getReadableErrorMessage(
-        caught,
-        "操作失败，请重试",
-      );
-      setError(actionErrorMessage);
+      setError(getReadableErrorMessage(caught, "操作失败，请重试"));
+    } finally {
       if (hasValidContract) {
         try {
           await refreshProjects(crowdfundingAddress as Address);
-        } catch (refreshCaught) {
-          const refreshErrorMessage =
-            refreshCaught instanceof Error
-              ? refreshCaught.message
-              : "项目状态刷新失败";
-          setError(`${actionErrorMessage}；${refreshErrorMessage}`);
+        } catch {
+          // 刷新失败不覆盖操作结果
         }
       }
-    } finally {
       setLoading(false);
     }
   }
@@ -326,7 +316,10 @@ function App() {
               loading={loading}
               nowSeconds={nowSeconds}
               project={selectedProject}
-              onBack={() => setView("list")}
+              onBack={() => {
+                setView("list");
+                void refreshProjects();
+              }}
               onContributionAmountChange={setContributionAmount}
               onContribute={handleContribute}
               onWithdrawCreator={() =>
