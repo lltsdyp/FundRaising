@@ -1,11 +1,12 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { ProjectDetail, ProjectList, ToastStack } from "./App";
+import { Profile, ProjectDetail, ProjectList, ToastStack } from "./App";
 import {
   DEFAULT_CROWDFUNDING_ADDRESS,
   getInitialCrowdfundingAddress,
 } from "./contracts";
+import { deriveProfileSummary } from "./profile";
 import { FundingModel, type FundingProject } from "./types";
 import { ProjectState } from "./utils";
 
@@ -345,6 +346,49 @@ describe("App presentation components", () => {
       (button) => button.textContent === "验证",
     );
     expect(approveButton?.disabled).toBe(false);
+
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("renders profile stats and supported/created project lists", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    const supporter = "0x3333333333333333333333333333333333333333";
+    const projects: FundingProject[] = [
+      {
+        ...sampleProject,
+        address: "0x4444444444444444444444444444444444444444",
+        contributors: [{ contributor: supporter, amount: 2_000_000_000_000_000_000n }],
+      },
+      {
+        ...sampleProject,
+        address: "0x5555555555555555555555555555555555555555",
+        creator: supporter,
+      },
+    ];
+    const summary = deriveProfileSummary(projects, supporter, 1_000);
+
+    act(() => {
+      root.render(
+        <Profile
+          address={supporter}
+          isSelf
+          summary={summary}
+          nowSeconds={1_000}
+          onBack={() => undefined}
+          onOpenProject={() => undefined}
+        />,
+      );
+    });
+
+    expect(host.textContent).toContain("累计捐赠");
+    expect(host.textContent).toContain("支持项目数");
+    expect(host.textContent).toContain("成功支持项目");
+    expect(host.textContent).toContain("我的资料");
+    expect(host.querySelectorAll(".project-row").length).toBe(2); // 1 supported + 1 created
 
     act(() => root.unmount());
     host.remove();

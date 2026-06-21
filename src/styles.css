@@ -589,3 +589,28 @@ label {
     grid-template-columns: 1fr;
   }
 }
+
+.self-badge {
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border, #d8d0c0);
+  color: var(--muted, #8a8170);
+  vertical-align: middle;
+}
+
+.link-button {
+  padding: 0;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+a.address-pill {
+  text-decoration: none;
+}

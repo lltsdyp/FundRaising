@@ -1,10 +1,12 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
 } from "react";
 import {
+  Link,
   Navigate,
   Outlet,
   Route,
@@ -26,6 +28,7 @@ import {
   withdrawContribution,
   withdrawRaisedFunds,
 } from "./contracts";
+import { deriveProfileSummary, type ProfileSummary } from "./profile";
 import {
   FundingModel,
   type CreateProjectInput,
@@ -306,7 +309,9 @@ function AppLayout() {
           {wallet ? (
             <>
               <span className="network-pill">Chain {wallet.chainId}</span>
-              <span className="address-pill">{formatAddress(wallet.address)}</span>
+              <Link className="address-pill" to={`/profile/${wallet.address}`}>
+                {formatAddress(wallet.address)}
+              </Link>
             </>
           ) : (
             <button className="primary-button" type="button" onClick={handleConnect}>
@@ -426,6 +431,31 @@ function ProjectDetailRoute() {
           await releaseMilestoneFunds(project.address, milestoneIndex);
         }, "里程碑资金已释放")
       }
+      onOpenProfile={(target) => navigate(`/profile/${target}`)}
+    />
+  );
+}
+
+function ProfileRoute() {
+  const ctx = useAppContext();
+  const navigate = useNavigate();
+  const { address } = useParams();
+  const profileAddress = (address ?? "") as Address;
+  const summary = useMemo(
+    () => deriveProfileSummary(ctx.projects, profileAddress, ctx.nowSeconds),
+    [ctx.projects, profileAddress, ctx.nowSeconds],
+  );
+  const isSelf =
+    normalizeAddress(ctx.wallet.address) === normalizeAddress(profileAddress);
+
+  return (
+    <Profile
+      address={profileAddress}
+      isSelf={isSelf}
+      summary={summary}
+      nowSeconds={ctx.nowSeconds}
+      onBack={() => navigate("/")}
+      onOpenProject={(target) => navigate(`/project/${target}`)}
     />
   );
 }
@@ -437,6 +467,7 @@ function App() {
         <Route index element={<ProjectListRoute />} />
         <Route path="create" element={<CreateProjectRoute />} />
         <Route path="project/:address" element={<ProjectDetailRoute />} />
+        <Route path="profile/:address" element={<ProfileRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
@@ -752,6 +783,7 @@ export function ProjectDetail({
   onSubmitMilestone,
   onApproveMilestone,
   onReleaseMilestone,
+  onOpenProfile,
 }: {
   account: Address;
   contributionAmount: string;
@@ -853,7 +885,13 @@ export function ProjectDetail({
           </dl>
           <div className="address-list">
             <span>项目地址 {formatAddress(project.address)}</span>
-            <span>发起人 {formatAddress(project.creator)}</span>
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => onOpenProfile?.(project.creator)}
+            >
+              发起人 {formatAddress(project.creator)}
+            </button>
           </div>
         </article>
 
@@ -1037,7 +1075,13 @@ export function ProjectDetail({
           <div className="table-list">
             {project.contributors.map((row) => (
               <div className="table-row" key={row.contributor}>
-                <span>{formatAddress(row.contributor)}</span>
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => onOpenProfile?.(row.contributor)}
+                >
+                  {formatAddress(row.contributor)}
+                </button>
                 <strong>{formatEth(row.amount)}</strong>
               </div>
             ))}
@@ -1045,6 +1089,143 @@ export function ProjectDetail({
         )}
       </section>
     </section>
+  );
+}
+
+export function Profile({
+  address,
+  isSelf,
+  summary,
+  nowSeconds,
+  onBack,
+  onOpenProject,
+}: {
+  address: Address;
+  isSelf: boolean;
+  summary: ProfileSummary;
+  nowSeconds: number;
+  onBack: () => void;
+  onOpenProject: (address: Address) => void;
+}) {
+  return (
+    <section className="detail-layout">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Profile</p>
+          <h2>
+            {formatAddress(address)}
+            {isSelf && <span className="self-badge">我的资料</span>}
+          </h2>
+        </div>
+        <button type="button" onClick={onBack}>
+          返回列表
+        </button>
+      </div>
+
+      <dl className="stats-grid">
+        <div>
+          <dt>累计捐赠</dt>
+          <dd>{formatEth(summary.cumulativeDonation)}</dd>
+        </div>
+        <div>
+          <dt>支持项目数</dt>
+          <dd>{summary.supportedCount}</dd>
+        </div>
+        <div>
+          <dt>成功支持项目</dt>
+          <dd>{summary.successfulCount}</dd>
+        </div>
+      </dl>
+
+      <section className="content-section">
+        <div className="section-heading compact">
+          <h3>支持的项目</h3>
+          <span>{summary.supportedProjects.length} 个</span>
+        </div>
+        {summary.supportedProjects.length === 0 ? (
+          <div className="empty-state">暂无支持的项目。</div>
+        ) : (
+          <ul className="project-list">
+            {summary.supportedProjects.map(({ project, amount }) => (
+              <ProfileProjectRow
+                key={`s-${project.address}`}
+                project={project}
+                nowSeconds={nowSeconds}
+                trailing={`捐赠 ${formatEth(amount)}`}
+                onOpen={onOpenProject}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="content-section">
+        <div className="section-heading compact">
+          <h3>发起的项目</h3>
+          <span>{summary.createdProjects.length} 个</span>
+        </div>
+        {summary.createdProjects.length === 0 ? (
+          <div className="empty-state">暂无发起的项目。</div>
+        ) : (
+          <ul className="project-list">
+            {summary.createdProjects.map((project) => (
+              <ProfileProjectRow
+                key={`c-${project.address}`}
+                project={project}
+                nowSeconds={nowSeconds}
+                trailing={`已筹 ${formatEth(project.raisedAmount)}`}
+                onOpen={onOpenProject}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function ProfileProjectRow({
+  project,
+  nowSeconds,
+  trailing,
+  onOpen,
+}: {
+  project: FundingProject;
+  nowSeconds: number;
+  trailing: string;
+  onOpen: (address: Address) => void;
+}) {
+  const liveRemainingTime = getLiveRemainingTime(project.deadline, nowSeconds);
+  const liveState = getLiveProjectState({
+    state: project.state,
+    deadline: project.deadline,
+    raisedAmount: project.raisedAmount,
+    targetContribution: project.targetContribution,
+    nowSeconds,
+  });
+
+  return (
+    <li className="project-row">
+      <button
+        className="project-row-button"
+        type="button"
+        onClick={() => onOpen(project.address)}
+      >
+        <div className="project-row-title">
+          <h3>{project.title}</h3>
+          <p>{project.description || "暂无描述"}</p>
+        </div>
+        <div className="project-row-status">
+          <span className={`state-badge state-${liveState}`}>
+            {getProjectPhase(liveState, liveRemainingTime)}
+          </span>
+          <span className="muted">{getFundingModelLabel(project.fundingModel)}</span>
+        </div>
+        <div className="project-row-meta">
+          <strong>{trailing}</strong>
+        </div>
+      </button>
+    </li>
   );
 }
 
