@@ -248,6 +248,7 @@ function App() {
   function openProject(projectAddress: Address) {
     setSelectedAddress(projectAddress);
     setView("detail");
+    void refreshProjects();
   }
 
   return (

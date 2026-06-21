@@ -2,6 +2,7 @@ import {
   createPublicClient,
   createWalletClient,
   custom,
+  isAddress,
   parseEther,
   type Address,
   type EIP1193Provider,
@@ -14,12 +15,15 @@ import {
   type ProjectMilestone,
   type WalletSession,
 } from "./types";
-import { ProjectState } from "./utils";
+import { ProjectState, withOperationTimeout } from "./utils";
 
 export const DEFAULT_CROWDFUNDING_ADDRESS: Address =
   "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 
 export const GANACHE_TRANSACTION_GAS_CAP = 16_777_216n;
+export const READ_OPERATION_TIMEOUT_MS = 20_000;
+export const WALLET_REQUEST_TIMEOUT_MS = 60_000;
+export const TRANSACTION_CONFIRMATION_TIMEOUT_MS = 120_000;
 
 export const WRITE_GAS_LIMITS = {
   createProject: 2_500_000n,
@@ -51,12 +55,39 @@ function getPublicClient() {
   });
 }
 
+function withReadTimeout<T>(operation: Promise<T>, label: string) {
+  return withOperationTimeout(
+    operation,
+    READ_OPERATION_TIMEOUT_MS,
+    `${label}超时，请检查钱包网络后重试`,
+  );
+}
+
+function withWalletRequestTimeout<T>(operation: Promise<T>, label: string) {
+  return withOperationTimeout(
+    operation,
+    WALLET_REQUEST_TIMEOUT_MS,
+    `${label}超时，请确认钱包弹窗或稍后重试`,
+  );
+}
+
+function withTransactionConfirmationTimeout<T>(operation: Promise<T>) {
+  return withOperationTimeout(
+    operation,
+    TRANSACTION_CONFIRMATION_TIMEOUT_MS,
+    "交易确认超时，交易可能仍在链上处理中，请稍后刷新项目状态",
+  );
+}
+
 async function getWalletClient() {
   const provider = getEthereumProvider();
   const walletClient = createWalletClient({
     transport: custom(provider),
   });
-  const [account] = await walletClient.getAddresses();
+  const [account] = await withWalletRequestTimeout(
+    walletClient.getAddresses(),
+    "读取钱包账户",
+  );
 
   if (!account) {
     throw new Error("请先连接钱包");
@@ -66,17 +97,33 @@ async function getWalletClient() {
 }
 
 export function getInitialCrowdfundingAddress(): Address {
-  return DEFAULT_CROWDFUNDING_ADDRESS;
+  return getConfiguredCrowdfundingAddress(
+    import.meta.env.VITE_CROWDFUNDING_ADDRESS,
+  );
+}
+
+export function getConfiguredCrowdfundingAddress(
+  configuredAddress: string | undefined,
+): Address {
+  return configuredAddress && isAddress(configuredAddress)
+    ? configuredAddress
+    : DEFAULT_CROWDFUNDING_ADDRESS;
 }
 
 export async function connectWallet(): Promise<WalletSession> {
   const provider = getEthereumProvider();
-  const accounts = (await provider.request({
-    method: "eth_requestAccounts",
-  })) as Address[];
-  const chainIdHex = (await provider.request({
-    method: "eth_chainId",
-  })) as string;
+  const accounts = (await withWalletRequestTimeout(
+    provider.request({
+      method: "eth_requestAccounts",
+    }),
+    "连接钱包",
+  )) as Address[];
+  const chainIdHex = (await withWalletRequestTimeout(
+    provider.request({
+      method: "eth_chainId",
+    }),
+    "读取钱包网络",
+  )) as string;
 
   if (!accounts[0]) {
     throw new Error("未获取到钱包账户");
@@ -93,14 +140,22 @@ export async function loadProjects(
   account?: Address,
 ): Promise<FundingProject[]> {
   const publicClient = getPublicClient();
-  const projectAddresses = await publicClient.readContract({
-    address: crowdfundingAddress,
-    abi: crowdfundingAbi,
-    functionName: "returnAllProjects",
-  });
+  const projectAddresses = await withReadTimeout(
+    publicClient.readContract({
+      address: crowdfundingAddress,
+      abi: crowdfundingAbi,
+      functionName: "returnAllProjects",
+    }),
+    "读取项目列表",
+  );
 
-  const projects = await Promise.all(
-    projectAddresses.map((projectAddress) => loadProject(projectAddress, account)),
+  const projects = await withReadTimeout(
+    Promise.all(
+      projectAddresses.map((projectAddress) =>
+        loadProject(projectAddress, account),
+      ),
+    ),
+    "读取项目详情",
   );
 
   return projects.sort((left, right) => {
@@ -126,68 +181,77 @@ export async function loadProject(
     nextMilestoneIndex,
     totalReleasedAmount,
     milestoneCount,
-  ] = await Promise.all([
-    publicClient.readContract({
-      address: projectAddress,
-      abi: projectAbi,
-      functionName: "getProjectDetails",
-    }),
-    publicClient.readContract({
-      address: projectAddress,
-      abi: projectAbi,
-      functionName: "getRemainingTime",
-    }),
-    publicClient.readContract({
-      address: projectAddress,
-      abi: projectAbi,
-      functionName: "getContributors",
-    }),
-    publicClient.readContract({
-      address: projectAddress,
-      abi: projectAbi,
-      functionName: "creatorWithdrawn",
-    }),
-    publicClient.readContract({
-      address: projectAddress,
-      abi: projectAbi,
-      functionName: "fundingModel",
-    }),
-    publicClient.readContract({
-      address: projectAddress,
-      abi: projectAbi,
-      functionName: "nextMilestoneIndex",
-    }),
-    publicClient.readContract({
-      address: projectAddress,
-      abi: projectAbi,
-      functionName: "totalReleasedAmount",
-    }),
-    publicClient.readContract({
-      address: projectAddress,
-      abi: projectAbi,
-      functionName: "getMilestoneCount",
-    }),
-  ]);
-
-  const contributionRows = await Promise.all(
-    contributors.map(async (contributor) => ({
-      contributor,
-      amount: await publicClient.readContract({
+  ] = await withReadTimeout(
+    Promise.all([
+      publicClient.readContract({
         address: projectAddress,
         abi: projectAbi,
-        functionName: "contributions",
-        args: [contributor],
+        functionName: "getProjectDetails",
       }),
-    })),
+      publicClient.readContract({
+        address: projectAddress,
+        abi: projectAbi,
+        functionName: "getRemainingTime",
+      }),
+      publicClient.readContract({
+        address: projectAddress,
+        abi: projectAbi,
+        functionName: "getContributors",
+      }),
+      publicClient.readContract({
+        address: projectAddress,
+        abi: projectAbi,
+        functionName: "creatorWithdrawn",
+      }),
+      publicClient.readContract({
+        address: projectAddress,
+        abi: projectAbi,
+        functionName: "fundingModel",
+      }),
+      publicClient.readContract({
+        address: projectAddress,
+        abi: projectAbi,
+        functionName: "nextMilestoneIndex",
+      }),
+      publicClient.readContract({
+        address: projectAddress,
+        abi: projectAbi,
+        functionName: "totalReleasedAmount",
+      }),
+      publicClient.readContract({
+        address: projectAddress,
+        abi: projectAbi,
+        functionName: "getMilestoneCount",
+      }),
+    ]),
+    "读取项目详情",
+  );
+
+  const contributionRows = await withReadTimeout(
+    Promise.all(
+      contributors.map(async (contributor) => ({
+        contributor,
+        amount: await publicClient.readContract({
+          address: projectAddress,
+          abi: projectAbi,
+          functionName: "contributions",
+          args: [contributor],
+        }),
+      })),
+    ),
+    "读取捐赠记录",
   );
 
   const userContribution = account
-    ? await publicClient.readContract({
-        address: projectAddress,
-        abi: projectAbi,
-        functionName: "contributions",
-        args: [account],
-      })
+    ? await withReadTimeout(
+        publicClient.readContract({
+          address: projectAddress,
+          abi: projectAbi,
+          functionName: "contributions",
+          args: [account],
+        }),
+        "读取用户捐赠记录",
+      )
     : 0n;
 
   const milestoneIndexes = Array.from(
@@ -195,37 +259,40 @@ export async function loadProject(
     (_, index) => BigInt(index),
   );
 
-  const milestones: ProjectMilestone[] = await Promise.all(
-    milestoneIndexes.map(async (milestoneIndex) => {
-      const [milestone, approved] = await Promise.all([
-        publicClient.readContract({
-          address: projectAddress,
-          abi: projectAbi,
-          functionName: "getMilestone",
-          args: [milestoneIndex],
-        }),
-        account
-          ? publicClient.readContract({
-              address: projectAddress,
-              abi: projectAbi,
-              functionName: "milestoneApprovals",
-              args: [milestoneIndex, account],
-            })
-          : Promise.resolve(false),
-      ]);
+  const milestones: ProjectMilestone[] = await withReadTimeout(
+    Promise.all(
+      milestoneIndexes.map(async (milestoneIndex) => {
+        const [milestone, approved] = await Promise.all([
+          publicClient.readContract({
+            address: projectAddress,
+            abi: projectAbi,
+            functionName: "getMilestone",
+            args: [milestoneIndex],
+          }),
+          account
+            ? publicClient.readContract({
+                address: projectAddress,
+                abi: projectAbi,
+                functionName: "milestoneApprovals",
+                args: [milestoneIndex, account],
+              })
+            : Promise.resolve(false),
+        ]);
 
-      return {
-        index: Number(milestoneIndex),
-        title: milestone[0],
-        evidenceUri: milestone[1],
-        releaseBps: Number(milestone[2]),
-        approvalWeight: milestone[3],
-        submitted: milestone[4],
-        released: milestone[5],
-        releasedAmount: milestone[6],
-        approved,
-      };
-    }),
+        return {
+          index: Number(milestoneIndex),
+          title: milestone[0],
+          evidenceUri: milestone[1],
+          releaseBps: Number(milestone[2]),
+          approvalWeight: milestone[3],
+          submitted: milestone[4],
+          released: milestone[5],
+          releasedAmount: milestone[6],
+          approved,
+        };
+      }),
+    ),
+    "读取里程碑",
   );
 
   return {
@@ -267,30 +334,38 @@ export async function createProject(
 
   const hash =
     input.fundingModel === FundingModel.Milestone
-      ? await walletClient.writeContract({
-          address: crowdfundingAddress,
-          abi: crowdfundingAbi,
-          functionName: "createMilestoneProject",
-          account,
-          chain: null,
-          gas: WRITE_GAS_LIMITS.createProject,
-          args: [
-            ...baseArgs,
-            input.milestones.map((milestone) => milestone.title),
-            input.milestones.map((milestone) => milestone.releaseBps),
-          ],
-        })
-      : await walletClient.writeContract({
-          address: crowdfundingAddress,
-          abi: crowdfundingAbi,
-          functionName: "createProject",
-          account,
-          chain: null,
-          gas: WRITE_GAS_LIMITS.createProject,
-          args: baseArgs,
-        });
+      ? await withWalletRequestTimeout(
+          walletClient.writeContract({
+            address: crowdfundingAddress,
+            abi: crowdfundingAbi,
+            functionName: "createMilestoneProject",
+            account,
+            chain: null,
+            gas: WRITE_GAS_LIMITS.createProject,
+            args: [
+              ...baseArgs,
+              input.milestones.map((milestone) => milestone.title),
+              input.milestones.map((milestone) => milestone.releaseBps),
+            ],
+          }),
+          "提交创建项目交易",
+        )
+      : await withWalletRequestTimeout(
+          walletClient.writeContract({
+            address: crowdfundingAddress,
+            abi: crowdfundingAbi,
+            functionName: "createProject",
+            account,
+            chain: null,
+            gas: WRITE_GAS_LIMITS.createProject,
+            args: baseArgs,
+          }),
+          "提交创建项目交易",
+        );
 
-  await publicClient.waitForTransactionReceipt({ hash });
+  await withTransactionConfirmationTimeout(
+    publicClient.waitForTransactionReceipt({ hash }),
+  );
   return hash;
 }
 
@@ -301,50 +376,65 @@ export async function contributeToProject(
 ) {
   const { walletClient, account } = await getWalletClient();
   const publicClient = getPublicClient();
-  const hash = await walletClient.writeContract({
-    address: crowdfundingAddress,
-    abi: crowdfundingAbi,
-    functionName: "contribute",
-    account,
-    chain: null,
-    gas: WRITE_GAS_LIMITS.contribute,
-    args: [projectAddress],
-    value: parseEther(amountEth),
-  });
+  const hash = await withWalletRequestTimeout(
+    walletClient.writeContract({
+      address: crowdfundingAddress,
+      abi: crowdfundingAbi,
+      functionName: "contribute",
+      account,
+      chain: null,
+      gas: WRITE_GAS_LIMITS.contribute,
+      args: [projectAddress],
+      value: parseEther(amountEth),
+    }),
+    "提交捐赠交易",
+  );
 
-  await publicClient.waitForTransactionReceipt({ hash });
+  await withTransactionConfirmationTimeout(
+    publicClient.waitForTransactionReceipt({ hash }),
+  );
   return hash;
 }
 
 export async function withdrawRaisedFunds(projectAddress: Address) {
   const { walletClient, account } = await getWalletClient();
   const publicClient = getPublicClient();
-  const hash = await walletClient.writeContract({
-    address: projectAddress,
-    abi: projectAbi,
-    functionName: "withdrawRaisedFunds",
-    account,
-    chain: null,
-    gas: WRITE_GAS_LIMITS.withdrawRaisedFunds,
-  });
+  const hash = await withWalletRequestTimeout(
+    walletClient.writeContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "withdrawRaisedFunds",
+      account,
+      chain: null,
+      gas: WRITE_GAS_LIMITS.withdrawRaisedFunds,
+    }),
+    "提交发起人提款交易",
+  );
 
-  await publicClient.waitForTransactionReceipt({ hash });
+  await withTransactionConfirmationTimeout(
+    publicClient.waitForTransactionReceipt({ hash }),
+  );
   return hash;
 }
 
 export async function withdrawContribution(projectAddress: Address) {
   const { walletClient, account } = await getWalletClient();
   const publicClient = getPublicClient();
-  const hash = await walletClient.writeContract({
-    address: projectAddress,
-    abi: projectAbi,
-    functionName: "withdrawContribution",
-    account,
-    chain: null,
-    gas: WRITE_GAS_LIMITS.withdrawContribution,
-  });
+  const hash = await withWalletRequestTimeout(
+    walletClient.writeContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "withdrawContribution",
+      account,
+      chain: null,
+      gas: WRITE_GAS_LIMITS.withdrawContribution,
+    }),
+    "提交退款交易",
+  );
 
-  await publicClient.waitForTransactionReceipt({ hash });
+  await withTransactionConfirmationTimeout(
+    publicClient.waitForTransactionReceipt({ hash }),
+  );
   return hash;
 }
 
@@ -355,17 +445,22 @@ export async function submitMilestone(
 ) {
   const { walletClient, account } = await getWalletClient();
   const publicClient = getPublicClient();
-  const hash = await walletClient.writeContract({
-    address: projectAddress,
-    abi: projectAbi,
-    functionName: "submitMilestone",
-    account,
-    chain: null,
-    gas: WRITE_GAS_LIMITS.submitMilestone,
-    args: [BigInt(milestoneIndex), evidenceUri],
-  });
+  const hash = await withWalletRequestTimeout(
+    walletClient.writeContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "submitMilestone",
+      account,
+      chain: null,
+      gas: WRITE_GAS_LIMITS.submitMilestone,
+      args: [BigInt(milestoneIndex), evidenceUri],
+    }),
+    "提交里程碑成果交易",
+  );
 
-  await publicClient.waitForTransactionReceipt({ hash });
+  await withTransactionConfirmationTimeout(
+    publicClient.waitForTransactionReceipt({ hash }),
+  );
   return hash;
 }
 
@@ -375,17 +470,22 @@ export async function approveMilestone(
 ) {
   const { walletClient, account } = await getWalletClient();
   const publicClient = getPublicClient();
-  const hash = await walletClient.writeContract({
-    address: projectAddress,
-    abi: projectAbi,
-    functionName: "approveMilestone",
-    account,
-    chain: null,
-    gas: WRITE_GAS_LIMITS.approveMilestone,
-    args: [BigInt(milestoneIndex)],
-  });
+  const hash = await withWalletRequestTimeout(
+    walletClient.writeContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "approveMilestone",
+      account,
+      chain: null,
+      gas: WRITE_GAS_LIMITS.approveMilestone,
+      args: [BigInt(milestoneIndex)],
+    }),
+    "提交里程碑验证交易",
+  );
 
-  await publicClient.waitForTransactionReceipt({ hash });
+  await withTransactionConfirmationTimeout(
+    publicClient.waitForTransactionReceipt({ hash }),
+  );
   return hash;
 }
 
@@ -395,16 +495,21 @@ export async function releaseMilestoneFunds(
 ) {
   const { walletClient, account } = await getWalletClient();
   const publicClient = getPublicClient();
-  const hash = await walletClient.writeContract({
-    address: projectAddress,
-    abi: projectAbi,
-    functionName: "releaseMilestoneFunds",
-    account,
-    chain: null,
-    gas: WRITE_GAS_LIMITS.releaseMilestoneFunds,
-    args: [BigInt(milestoneIndex)],
-  });
+  const hash = await withWalletRequestTimeout(
+    walletClient.writeContract({
+      address: projectAddress,
+      abi: projectAbi,
+      functionName: "releaseMilestoneFunds",
+      account,
+      chain: null,
+      gas: WRITE_GAS_LIMITS.releaseMilestoneFunds,
+      args: [BigInt(milestoneIndex)],
+    }),
+    "提交里程碑资金释放交易",
+  );
 
-  await publicClient.waitForTransactionReceipt({ hash });
+  await withTransactionConfirmationTimeout(
+    publicClient.waitForTransactionReceipt({ hash }),
+  );
   return hash;
 }

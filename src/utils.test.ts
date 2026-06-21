@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   ProjectState,
   formatAddress,
@@ -13,6 +13,7 @@ import {
   getProjectPhase,
   getReadableErrorMessage,
   parseDeadlineToUnixSeconds,
+  withOperationTimeout,
 } from "./utils";
 
 describe("frontend utility behavior", () => {
@@ -130,5 +131,24 @@ describe("frontend utility behavior", () => {
     expect(getReadableErrorMessage(error, "操作失败，请重试")).toBe(
       "捐赠金额低于项目最低要求",
     );
+  });
+
+  it("rejects operations that do not settle before the timeout", async () => {
+    vi.useFakeTimers();
+
+    try {
+      const result = withOperationTimeout(
+        new Promise<string>(() => undefined),
+        100,
+        "读取链上数据超时",
+      );
+      const rejection = expect(result).rejects.toThrow("读取链上数据超时");
+
+      await vi.advanceTimersByTimeAsync(100);
+
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
