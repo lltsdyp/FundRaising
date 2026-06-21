@@ -1,4 +1,18 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+import {
+  Navigate,
+  Outlet,
+  Route,
+  Routes,
+  useNavigate,
+  useOutletContext,
+  useParams,
+} from "react-router-dom";
 import { isAddress, parseEther, type Address } from "viem";
 import {
   approveMilestone,
@@ -35,7 +49,6 @@ import {
   parseDeadlineToUnixSeconds,
 } from "./utils";
 
-type View = "list" | "create" | "detail";
 const TOAST_AUTO_DISMISS_MS = 2_800;
 
 const defaultCreateForm = {
@@ -51,11 +64,36 @@ const defaultCreateForm = {
   ],
 };
 
-function App() {
+export type AppContext = {
+  wallet: WalletSession;
+  projects: FundingProject[];
+  loading: boolean;
+  nowSeconds: number;
+  contributionAmount: string;
+  setContributionAmount: (value: string) => void;
+  createForm: typeof defaultCreateForm;
+  setCreateForm: (form: typeof defaultCreateForm) => void;
+  crowdfundingAddress: string;
+  refreshProjects: (address?: string) => Promise<void>;
+  runAction: (
+    action: () => Promise<void>,
+    successMessage: string,
+  ) => Promise<void>;
+  submitCreateProject: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  submitContribution: (
+    event: FormEvent<HTMLFormElement>,
+    project: FundingProject,
+  ) => Promise<void>;
+};
+
+export function useAppContext(): AppContext {
+  return useOutletContext<AppContext>();
+}
+
+function AppLayout() {
+  const navigate = useNavigate();
   const [wallet, setWallet] = useState<WalletSession | null>(null);
   const [projects, setProjects] = useState<FundingProject[]>([]);
-  const [selectedAddress, setSelectedAddress] = useState<Address | null>(null);
-  const [view, setView] = useState<View>("list");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -91,11 +129,6 @@ function App() {
 
     return () => window.clearTimeout(timer);
   }, [message]);
-
-  const selectedProject = useMemo(
-    () => projects.find((project) => project.address === selectedAddress) ?? null,
-    [projects, selectedAddress],
-  );
 
   const connectedAddress = wallet?.address;
   const hasValidContract = isAddress(crowdfundingAddress);
@@ -157,7 +190,7 @@ function App() {
     }
   }
 
-  async function refreshProjects(address = crowdfundingAddress) {
+  async function refreshProjects(address: string = crowdfundingAddress) {
     if (!isAddress(address)) {
       setProjects([]);
       return;
@@ -189,7 +222,7 @@ function App() {
     }
   }
 
-  async function handleCreateProject(event: FormEvent<HTMLFormElement>) {
+  async function submitCreateProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!isAddress(crowdfundingAddress)) {
@@ -225,36 +258,47 @@ function App() {
     await runAction(async () => {
       await createProject(crowdfundingAddress as Address, input);
       setCreateForm(defaultCreateForm);
-      setView("list");
+      navigate("/");
     }, "项目已创建");
   }
 
-  async function handleContribute(event: FormEvent<HTMLFormElement>) {
+  async function submitContribution(
+    event: FormEvent<HTMLFormElement>,
+    project: FundingProject,
+  ) {
     event.preventDefault();
-
-    if (!selectedProject || !isAddress(crowdfundingAddress)) {
+    if (!isAddress(crowdfundingAddress)) {
       return;
     }
-
     await runAction(async () => {
       await contributeToProject(
         crowdfundingAddress as Address,
-        selectedProject.address,
+        project.address,
         contributionAmount,
       );
     }, "捐赠已提交");
   }
 
-  function openProject(projectAddress: Address) {
-    setSelectedAddress(projectAddress);
-    setView("detail");
-    void refreshProjects();
-  }
+  const ctx: AppContext = {
+    wallet: wallet as WalletSession,
+    projects,
+    loading,
+    nowSeconds,
+    contributionAmount,
+    setContributionAmount,
+    createForm,
+    setCreateForm,
+    crowdfundingAddress,
+    refreshProjects,
+    runAction,
+    submitCreateProject,
+    submitContribution,
+  };
 
   return (
     <main className="app-shell">
       <header className="topbar">
-        <button className="brand" type="button" onClick={() => setView("list")}>
+        <button className="brand" type="button" onClick={() => navigate("/")}>
           <span className="brand-mark">M</span>
           <span>MyFundings</span>
         </button>
@@ -288,93 +332,114 @@ function App() {
           </button>
         </section>
       ) : (
-        <>
-          {view === "list" && (
-            <ProjectList
-              projects={projects}
-              canLoad={hasValidContract}
-              nowSeconds={nowSeconds}
-              onRefresh={() => runAction(() => refreshProjects(), "项目列表已刷新")}
-              onCreate={() => setView("create")}
-              onOpen={openProject}
-            />
-          )}
-
-          {view === "create" && (
-            <CreateProjectView
-              form={createForm}
-              loading={loading}
-              onBack={() => setView("list")}
-              onSubmit={handleCreateProject}
-              onChange={(nextForm) => setCreateForm(nextForm)}
-            />
-          )}
-
-          {view === "detail" && selectedProject && (
-            <ProjectDetail
-              account={wallet.address}
-              contributionAmount={contributionAmount}
-              loading={loading}
-              nowSeconds={nowSeconds}
-              project={selectedProject}
-              onBack={() => {
-                setView("list");
-                void refreshProjects();
-              }}
-              onContributionAmountChange={setContributionAmount}
-              onContribute={handleContribute}
-              onWithdrawCreator={() =>
-                runAction(
-                  async () => {
-                    await withdrawRaisedFunds(selectedProject.address);
-                  },
-                  "项目发起人提款已完成",
-                )
-              }
-              onWithdrawContribution={() =>
-                runAction(
-                  async () => {
-                    await withdrawContribution(selectedProject.address);
-                  },
-                  "退款已回收",
-                )
-              }
-              onSubmitMilestone={(milestoneIndex, evidenceUri) =>
-                runAction(
-                  async () => {
-                    await submitMilestone(
-                      selectedProject.address,
-                      milestoneIndex,
-                      evidenceUri,
-                    );
-                  },
-                  "里程碑成果已提交",
-                )
-              }
-              onApproveMilestone={(milestoneIndex) =>
-                runAction(
-                  async () => {
-                    await approveMilestone(selectedProject.address, milestoneIndex);
-                  },
-                  "里程碑验证已提交",
-                )
-              }
-              onReleaseMilestone={(milestoneIndex) =>
-                runAction(
-                  async () => {
-                    await releaseMilestoneFunds(
-                      selectedProject.address,
-                      milestoneIndex,
-                    );
-                  },
-                  "里程碑资金已释放",
-                )
-              }
-            />
-          )}
-        </>
+        <Outlet context={ctx} />
       )}
     </main>
+  );
+}
+
+function ProjectListRoute() {
+  const ctx = useAppContext();
+  const navigate = useNavigate();
+
+  return (
+    <ProjectList
+      projects={ctx.projects}
+      canLoad={isAddress(ctx.crowdfundingAddress)}
+      nowSeconds={ctx.nowSeconds}
+      onRefresh={() => ctx.runAction(() => ctx.refreshProjects(), "项目列表已刷新")}
+      onCreate={() => navigate("/create")}
+      onOpen={(address) => navigate(`/project/${address}`)}
+    />
+  );
+}
+
+function CreateProjectRoute() {
+  const ctx = useAppContext();
+  const navigate = useNavigate();
+
+  return (
+    <CreateProjectView
+      form={ctx.createForm}
+      loading={ctx.loading}
+      onBack={() => navigate("/")}
+      onSubmit={ctx.submitCreateProject}
+      onChange={ctx.setCreateForm}
+    />
+  );
+}
+
+function ProjectDetailRoute() {
+  const ctx = useAppContext();
+  const navigate = useNavigate();
+  const { address } = useParams();
+  const project = ctx.projects.find(
+    (item) => normalizeAddress(item.address) === normalizeAddress(address ?? ""),
+  );
+
+  if (!project) {
+    return (
+      <section className="content-section">
+        <div className="section-heading">
+          <h2>未找到项目</h2>
+          <button type="button" onClick={() => navigate("/")}>
+            返回列表
+          </button>
+        </div>
+        <div className="empty-state">未找到该项目，请返回列表刷新后重试。</div>
+      </section>
+    );
+  }
+
+  return (
+    <ProjectDetail
+      account={ctx.wallet.address}
+      contributionAmount={ctx.contributionAmount}
+      loading={ctx.loading}
+      nowSeconds={ctx.nowSeconds}
+      project={project}
+      onBack={() => navigate("/")}
+      onContributionAmountChange={ctx.setContributionAmount}
+      onContribute={(event) => ctx.submitContribution(event, project)}
+      onWithdrawCreator={() =>
+        ctx.runAction(async () => {
+          await withdrawRaisedFunds(project.address);
+        }, "项目发起人提款已完成")
+      }
+      onWithdrawContribution={() =>
+        ctx.runAction(async () => {
+          await withdrawContribution(project.address);
+        }, "退款已回收")
+      }
+      onSubmitMilestone={(milestoneIndex, evidenceUri) =>
+        ctx.runAction(async () => {
+          await submitMilestone(project.address, milestoneIndex, evidenceUri);
+        }, "里程碑成果已提交")
+      }
+      onApproveMilestone={(milestoneIndex) =>
+        ctx.runAction(async () => {
+          await approveMilestone(project.address, milestoneIndex);
+        }, "里程碑验证已提交")
+      }
+      onReleaseMilestone={(milestoneIndex) =>
+        ctx.runAction(async () => {
+          await releaseMilestoneFunds(project.address, milestoneIndex);
+        }, "里程碑资金已释放")
+      }
+    />
+  );
+}
+
+function App() {
+  return (
+    <Routes>
+      <Route element={<AppLayout />}>
+        <Route index element={<ProjectListRoute />} />
+        <Route path="create" element={<CreateProjectRoute />} />
+        <Route path="project/:address" element={<ProjectDetailRoute />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
   );
 }
 
@@ -701,6 +766,7 @@ export function ProjectDetail({
   onSubmitMilestone: (milestoneIndex: number, evidenceUri: string) => void;
   onApproveMilestone: (milestoneIndex: number) => void;
   onReleaseMilestone: (milestoneIndex: number) => void;
+  onOpenProfile?: (address: Address) => void;
 }) {
   const [evidenceUri, setEvidenceUri] = useState("");
   const isCreator = normalizeAddress(account) === normalizeAddress(project.creator);
