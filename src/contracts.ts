@@ -135,6 +135,15 @@ export async function connectWallet(): Promise<WalletSession> {
   };
 }
 
+export async function loadAccountBalance(address: Address): Promise<bigint> {
+  const publicClient = getPublicClient();
+
+  return withReadTimeout(
+    publicClient.getBalance({ address }),
+    "读取账户余额",
+  );
+}
+
 export async function loadProjects(
   crowdfundingAddress: Address,
   account?: Address,

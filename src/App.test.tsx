@@ -393,4 +393,50 @@ describe("App presentation components", () => {
     act(() => root.unmount());
     host.remove();
   });
+
+  it("shows the wallet balance card only when a balance is provided", () => {
+    const supporter = "0x3333333333333333333333333333333333333333";
+    const summary = deriveProfileSummary([], supporter, 1_000);
+
+    const withBalance = document.createElement("div");
+    document.body.append(withBalance);
+    const withBalanceRoot = createRoot(withBalance);
+    act(() => {
+      withBalanceRoot.render(
+        <Profile
+          address={supporter}
+          isSelf
+          summary={summary}
+          nowSeconds={1_000}
+          balance={3_000_000_000_000_000_000n}
+          onBack={() => undefined}
+          onOpenProject={() => undefined}
+        />,
+      );
+    });
+    expect(withBalance.textContent).toContain("钱包余额");
+    expect(withBalance.textContent).toContain("3 ETH");
+    act(() => withBalanceRoot.unmount());
+    withBalance.remove();
+
+    const withoutBalance = document.createElement("div");
+    document.body.append(withoutBalance);
+    const withoutBalanceRoot = createRoot(withoutBalance);
+    act(() => {
+      withoutBalanceRoot.render(
+        <Profile
+          address={supporter}
+          isSelf={false}
+          summary={summary}
+          nowSeconds={1_000}
+          balance={null}
+          onBack={() => undefined}
+          onOpenProject={() => undefined}
+        />,
+      );
+    });
+    expect(withoutBalance.textContent).not.toContain("钱包余额");
+    act(() => withoutBalanceRoot.unmount());
+    withoutBalance.remove();
+  });
 });

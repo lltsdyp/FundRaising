@@ -22,6 +22,7 @@ import {
   contributeToProject,
   createProject,
   getInitialCrowdfundingAddress,
+  loadAccountBalance,
   loadProjects,
   releaseMilestoneFunds,
   submitMilestone,
@@ -69,6 +70,7 @@ const defaultCreateForm = {
 
 export type AppContext = {
   wallet: WalletSession;
+  walletBalance: bigint | null;
   projects: FundingProject[];
   loading: boolean;
   nowSeconds: number;
@@ -96,6 +98,7 @@ export function useAppContext(): AppContext {
 function AppLayout() {
   const navigate = useNavigate();
   const [wallet, setWallet] = useState<WalletSession | null>(null);
+  const [walletBalance, setWalletBalance] = useState<bigint | null>(null);
   const [projects, setProjects] = useState<FundingProject[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -201,6 +204,20 @@ function AppLayout() {
 
     const loadedProjects = await loadProjects(address, connectedAddress);
     setProjects(loadedProjects);
+    await refreshWalletBalance(connectedAddress);
+  }
+
+  async function refreshWalletBalance(account?: Address) {
+    if (!account) {
+      setWalletBalance(null);
+      return;
+    }
+
+    try {
+      setWalletBalance(await loadAccountBalance(account));
+    } catch {
+      // 余额读取失败不阻断主流程
+    }
   }
 
   async function handleConnect() {
@@ -218,6 +235,7 @@ function AppLayout() {
         );
         setProjects(loadedProjects);
       }
+      await refreshWalletBalance(session.address);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "连接钱包失败");
     } finally {
@@ -284,6 +302,7 @@ function AppLayout() {
 
   const ctx: AppContext = {
     wallet: wallet as WalletSession,
+    walletBalance,
     projects,
     loading,
     nowSeconds,
@@ -454,6 +473,7 @@ function ProfileRoute() {
       isSelf={isSelf}
       summary={summary}
       nowSeconds={ctx.nowSeconds}
+      balance={isSelf ? ctx.walletBalance : null}
       onBack={() => navigate("/")}
       onOpenProject={(target) => navigate(`/project/${target}`)}
     />
@@ -1097,6 +1117,7 @@ export function Profile({
   isSelf,
   summary,
   nowSeconds,
+  balance,
   onBack,
   onOpenProject,
 }: {
@@ -1104,6 +1125,7 @@ export function Profile({
   isSelf: boolean;
   summary: ProfileSummary;
   nowSeconds: number;
+  balance?: bigint | null;
   onBack: () => void;
   onOpenProject: (address: Address) => void;
 }) {
@@ -1123,6 +1145,12 @@ export function Profile({
       </div>
 
       <dl className="stats-grid">
+        {balance != null && (
+          <div>
+            <dt>钱包余额</dt>
+            <dd>{formatEth(balance)}</dd>
+          </div>
+        )}
         <div>
           <dt>累计捐赠</dt>
           <dd>{formatEth(summary.cumulativeDonation)}</dd>
