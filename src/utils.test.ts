@@ -133,6 +133,29 @@ describe("frontend utility behavior", () => {
     );
   });
 
+  it("surfaces an unmapped revert reason instead of the generic fallback", () => {
+    const error = new Error(
+      'The contract function "createProject" reverted with the following reason:\nDeadline must be in the future\n\nContract Call:\n  address: 0x5FbDB2315678afecb367f032d93F642f64180aa3',
+    );
+
+    expect(getReadableErrorMessage(error, "操作失败，请重试")).toBe(
+      "合约拒绝了这次操作：Deadline must be in the future",
+    );
+  });
+
+  it("falls back to a viem shortMessage when no reason can be parsed", () => {
+    const error = Object.assign(
+      new Error(
+        "Some long multi-line viem error\nDetails: nonce too low\nContract Call: ...",
+      ),
+      { shortMessage: "Nonce provided is too low." },
+    );
+
+    expect(getReadableErrorMessage(error, "操作失败，请重试")).toBe(
+      "Nonce provided is too low.",
+    );
+  });
+
   it("rejects operations that do not settle before the timeout", async () => {
     vi.useFakeTimers();
 

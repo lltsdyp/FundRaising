@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.28;
 
+import {DonationBadge} from "./DonationBadge.sol";
 import {Project} from "./Project.sol";
 
 contract Crowdfunding {
@@ -24,7 +25,13 @@ contract Crowdfunding {
     address indexed contributor
   );
 
+  DonationBadge public immutable donationBadge;
+  mapping(address projectAddress => bool registered) public isProject;
   Project[] private projects;
+
+  constructor() {
+    donationBadge = new DonationBadge(address(this));
+  }
 
   function createProject(
     uint256 minimumContribution,
@@ -49,6 +56,7 @@ contract Crowdfunding {
     );
 
     projects.push(newProject);
+    isProject[address(newProject)] = true;
 
     emit ProjectStarted(
       address(newProject),
@@ -87,6 +95,7 @@ contract Crowdfunding {
     );
 
     projects.push(newProject);
+    isProject[address(newProject)] = true;
 
     emit ProjectStarted(
       address(newProject),
@@ -108,13 +117,21 @@ contract Crowdfunding {
   }
 
   function contribute(address projectAddress) external payable {
+    require(isProject[projectAddress], "Unknown project");
+
     Project project = Project(projectAddress);
 
     uint256 minContributionAmount = project.minimumContribution();
     require(project.isOngoing(), "Project is not ongoing");
     require(msg.value >= minContributionAmount, "Contribution amount is too low !");
 
-    project.contribute{value: msg.value}(msg.sender);
+    (bool isNewContributor, uint256 rank) = project.contribute{
+      value: msg.value
+    }(msg.sender);
+
+    if (isNewContributor && rank <= 3) {
+      donationBadge.mint(msg.sender, projectAddress, rank);
+    }
 
     emit ContributionReceived(projectAddress, msg.value, msg.sender);
   }

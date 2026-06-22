@@ -43,6 +43,7 @@ contract Project {
   uint256 public totalReleasedAmount;
 
   mapping(address contributor => uint256 amount) public contributions;
+  mapping(address contributor => uint256 rank) public contributorRank;
   Milestone[] private milestones;
   mapping(uint256 milestoneIndex => mapping(address contributor => bool approved))
     public milestoneApprovals;
@@ -135,7 +136,11 @@ contract Project {
     require(totalBps == BASIS_POINTS, "Milestone percentages must total 100%");
   }
 
-  function contribute(address _contributor) external payable {
+  function contribute(address _contributor)
+    external
+    payable
+    returns (bool isNewContributor, uint256 rank)
+  {
     require(msg.sender == crowdfundingContract, "Only crowdfunding contract");
 
     refreshState();
@@ -145,9 +150,14 @@ contract Project {
     require(_contributor != creator, "Creator cannot contribute to own project");
     require(msg.value >= minimumContribution, "Contribution amount is too low !");
 
-    if (contributions[_contributor] == 0) {
+    rank = contributorRank[_contributor];
+
+    if (rank == 0) {
       contributors.push(_contributor);
       noOfContributors++;
+      rank = noOfContributors;
+      contributorRank[_contributor] = rank;
+      isNewContributor = true;
     }
 
     contributions[_contributor] += msg.value;

@@ -21,6 +21,7 @@ vi.mock("viem", () => ({
     writeContract: viemMocks.writeContract,
   })),
   custom: vi.fn((provider) => provider),
+  http: vi.fn((url) => url),
   isAddress: vi.fn((value) => /^0x[a-fA-F0-9]{40}$/.test(value)),
   parseEther: vi.fn(() => 1n),
 }));

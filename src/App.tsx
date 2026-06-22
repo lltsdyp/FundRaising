@@ -16,6 +16,8 @@ import {
   useParams,
 } from "react-router-dom";
 import { isAddress, parseEther, type Address } from "viem";
+import { BadgeGallery, type DisplayBadge } from "./BadgeGallery";
+import { loadDonationBadges } from "./badges";
 import {
   approveMilestone,
   connectWallet,
@@ -25,6 +27,7 @@ import {
   loadAccountBalance,
   loadProjects,
   releaseMilestoneFunds,
+  requestAccountSelection,
   submitMilestone,
   withdrawContribution,
   withdrawRaisedFunds,
@@ -33,6 +36,7 @@ import { deriveProfileSummary, type ProfileSummary } from "./profile";
 import {
   FundingModel,
   type CreateProjectInput,
+  type DonationBadge,
   type FundingProject,
   type WalletSession,
 } from "./types";
@@ -140,6 +144,59 @@ function AppLayout() {
   const hasValidContract = isAddress(crowdfundingAddress);
 
   useEffect(() => {
+    const provider = window.ethereum;
+    if (!provider) {
+      return;
+    }
+
+    const reloadForAccount = (account: Address) => {
+      if (!hasValidContract) {
+        return;
+      }
+
+      void loadProjects(crowdfundingAddress as Address, account)
+        .then(setProjects)
+        .catch(() => {
+          // 切换账户后的刷新失败不阻断主流程
+        });
+      void refreshWalletBalance(account);
+    };
+
+    const handleAccountsChanged = (accounts: Address[]) => {
+      const [next] = accounts;
+      if (!next) {
+        // 用户在 MetaMask 里断开了全部账户
+        setWallet(null);
+        setWalletBalance(null);
+        setProjects([]);
+        return;
+      }
+
+      setWallet((prev) =>
+        prev ? { ...prev, address: next } : prev,
+      );
+      reloadForAccount(next);
+    };
+
+    const handleChainChanged = (chainIdHex: string) => {
+      setWallet((prev) =>
+        prev ? { ...prev, chainId: Number.parseInt(chainIdHex, 16) } : prev,
+      );
+      if (connectedAddress) {
+        reloadForAccount(connectedAddress);
+      }
+    };
+
+    provider.on("accountsChanged", handleAccountsChanged);
+    provider.on("chainChanged", handleChainChanged);
+
+    return () => {
+      provider.removeListener("accountsChanged", handleAccountsChanged);
+      provider.removeListener("chainChanged", handleChainChanged);
+    };
+  }, [crowdfundingAddress, hasValidContract, connectedAddress]);
+
+  useEffect(() => {
     if (!hasValidContract || isAutoRefreshingRef.current) {
       return;
     }
@@ -243,6 +300,29 @@ function AppLayout() {
     }
   }
 
+  async function handleSwitchAccount() {
+    setLoading(true);
+    setError("");
+
+    try {
+      const session = await requestAccountSelection();
+      setWallet(session);
+      setMessage("已切换账户");
+      if (hasValidContract) {
+        const loadedProjects = await loadProjects(
+          crowdfundingAddress as Address,
+          session.address,
+        );
+        setProjects(loadedProjects);
+      }
+      await refreshWalletBalance(session.address);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "切换账户失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function submitCreateProject(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -331,6 +411,13 @@ function AppLayout() {
               <Link className="address-pill" to={`/profile/${wallet.address}`}>
                 {formatAddress(wallet.address)}
               </Link>
+              <button
+                type="button"
+                onClick={handleSwitchAccount}
+                disabled={loading}
+              >
+                切换账户
+              </button>
             </>
           ) : (
             <button className="primary-button" type="button" onClick={handleConnect}>
@@ -455,21 +542,50 @@ function ProjectDetailRoute() {
   );
 }
 
-function ProfileRoute() {
+export function ProfileRoute() {
+  const { address } = useParams();
+
+  if (!address || !isAddress(address)) {
+    return <Navigate to="/" replace />;
+  }
+
+  return <ValidProfileRoute profileAddress={address} />;
+}
+
+function ValidProfileRoute({ profileAddress }: { profileAddress: Address }) {
   const ctx = useAppContext();
   const navigate = useNavigate();
-  const { address } = useParams();
-  const profileAddress = (address ?? "") as Address;
   const summary = useMemo(
     () => deriveProfileSummary(ctx.projects, profileAddress, ctx.nowSeconds),
     [ctx.projects, profileAddress, ctx.nowSeconds],
   );
   const isSelf =
     normalizeAddress(ctx.wallet.address) === normalizeAddress(profileAddress);
+  const badgeState = useProfileBadgeState(
+    ctx.crowdfundingAddress,
+    profileAddress,
+  );
+  const displayBadges = useMemo<DisplayBadge[]>(() => {
+    const projectTitles = new Map(
+      ctx.projects.map((project) => [
+        normalizeAddress(project.address),
+        project.title,
+      ]),
+    );
+
+    return badgeState.badges.map((badge) => ({
+      ...badge,
+      projectTitle:
+        projectTitles.get(normalizeAddress(badge.project)) ?? "未知项目",
+    }));
+  }, [badgeState.badges, ctx.projects]);
 
   return (
     <Profile
       address={profileAddress}
+      badges={displayBadges}
+      badgeLoading={badgeState.loading}
+      badgeError={badgeState.error}
       isSelf={isSelf}
       summary={summary}
       nowSeconds={ctx.nowSeconds}
@@ -478,6 +594,108 @@ function ProfileRoute() {
       onOpenProject={(target) => navigate(`/project/${target}`)}
     />
   );
+}
+
+type ProfileBadgeLoader = (
+  crowdfundingAddress: Address,
+  profileAddress: Address,
+) => Promise<DonationBadge[]>;
+
+export function useProfileBadgeState(
+  crowdfundingAddress: string,
+  profileAddress: string,
+  loader: ProfileBadgeLoader = loadDonationBadges,
+) {
+  const [state, setState] = useState<{
+    badges: DonationBadge[];
+    loading: boolean;
+    error: string;
+    requestAddress: string;
+    requestCrowdfundingAddress: string;
+    loadedFor: string;
+  }>({
+    badges: [],
+    loading: false,
+    error: "",
+    requestAddress: "",
+    requestCrowdfundingAddress: "",
+    loadedFor: "",
+  });
+
+  useEffect(() => {
+    let active = true;
+
+    if (!isAddress(crowdfundingAddress) || !isAddress(profileAddress)) {
+      setState({
+        badges: [],
+        loading: false,
+        error: "",
+        requestAddress: profileAddress,
+        requestCrowdfundingAddress: crowdfundingAddress,
+        loadedFor: "",
+      });
+      return () => {
+        active = false;
+      };
+    }
+
+    setState({
+      badges: [],
+      loading: true,
+      error: "",
+      requestAddress: profileAddress,
+      requestCrowdfundingAddress: crowdfundingAddress,
+      loadedFor: "",
+    });
+    void loader(crowdfundingAddress, profileAddress)
+      .then((loadedBadges) => {
+        if (active) {
+          setState({
+            badges: loadedBadges,
+            loading: false,
+            error: "",
+            requestAddress: profileAddress,
+            requestCrowdfundingAddress: crowdfundingAddress,
+            loadedFor: profileAddress,
+          });
+        }
+      })
+      .catch((caught) => {
+        if (active) {
+          setState({
+            badges: [],
+            loading: false,
+            error: `徽章加载失败：${getReadableErrorMessage(caught, "未知错误")}`,
+            requestAddress: profileAddress,
+            requestCrowdfundingAddress: crowdfundingAddress,
+            loadedFor: "",
+          });
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [crowdfundingAddress, profileAddress, loader]);
+
+  const validRequest =
+    isAddress(crowdfundingAddress) && isAddress(profileAddress);
+  const requestMatches =
+    validRequest &&
+    normalizeAddress(state.requestAddress) === normalizeAddress(profileAddress) &&
+    normalizeAddress(state.requestCrowdfundingAddress) ===
+      normalizeAddress(crowdfundingAddress);
+  const loadedMatches =
+    requestMatches &&
+    normalizeAddress(state.loadedFor) === normalizeAddress(profileAddress);
+
+  return {
+    badges: loadedMatches ? state.badges : [],
+    loading: validRequest && (!requestMatches || state.loading),
+    error: requestMatches ? state.error : "",
+    requestAddress: state.requestAddress,
+    loadedFor: state.loadedFor,
+  };
 }
 
 function App() {
@@ -1114,6 +1332,9 @@ export function ProjectDetail({
 
 export function Profile({
   address,
+  badges,
+  badgeLoading,
+  badgeError,
   isSelf,
   summary,
   nowSeconds,
@@ -1122,6 +1343,9 @@ export function Profile({
   onOpenProject,
 }: {
   address: Address;
+  badges: DisplayBadge[];
+  badgeLoading: boolean;
+  badgeError: string;
   isSelf: boolean;
   summary: ProfileSummary;
   nowSeconds: number;
@@ -1164,6 +1388,13 @@ export function Profile({
           <dd>{summary.successfulCount}</dd>
         </div>
       </dl>
+
+      <BadgeGallery
+        badges={badges}
+        loading={badgeLoading}
+        error={badgeError}
+        onOpenProject={onOpenProject}
+      />
 
       <section className="content-section">
         <div className="section-heading compact">

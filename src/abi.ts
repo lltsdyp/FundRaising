@@ -1,6 +1,13 @@
 export const crowdfundingAbi = [
   {
     type: "function",
+    name: "donationBadge",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
+    type: "function",
     name: "createProject",
     stateMutability: "nonpayable",
     inputs: [
@@ -44,6 +51,23 @@ export const crowdfundingAbi = [
 ] as const;
 
 export const projectAbi = [
+  {
+    type: "function",
+    name: "contribute",
+    stateMutability: "payable",
+    inputs: [{ name: "_contributor", type: "address" }],
+    outputs: [
+      { name: "isNewContributor", type: "bool" },
+      { name: "rank", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "contributorRank",
+    stateMutability: "view",
+    inputs: [{ name: "contributor", type: "address" }],
+    outputs: [{ name: "rank", type: "uint256" }],
+  },
   {
     type: "function",
     name: "contributions",
@@ -180,5 +204,42 @@ export const projectAbi = [
     stateMutability: "nonpayable",
     inputs: [],
     outputs: [],
+  },
+] as const;
+
+export const donationBadgeAbi = [
+  {
+    type: "function",
+    name: "balanceOf",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "balance", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "tokenOfOwnerByIndex",
+    stateMutability: "view",
+    inputs: [
+      { name: "owner", type: "address" },
+      { name: "index", type: "uint256" },
+    ],
+    outputs: [{ name: "tokenId", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "badges",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [
+      { name: "project", type: "address" },
+      { name: "rank", type: "uint256" },
+    ],
+  },
+  {
+    type: "function",
+    name: "tokenURI",
+    stateMutability: "view",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [{ name: "", type: "string" }],
   },
 ] as const;

@@ -184,9 +184,29 @@ export function getReadableErrorMessage(caught: unknown, fallback: string) {
     return "钱包已取消本次操作";
   }
 
+  // 兼容多种 revert 原因格式:旧式 reason string、自定义错误、以及新式 "the following reason:"
+  const revertReason =
+    message.match(/reverted with reason string '([^']+)'/)?.[1] ??
+    message.match(/reverted with custom error '([^']+)'/)?.[1] ??
+    message
+      .match(/reverted with the following reason:\s*\n?\s*([^\n]+)/)?.[1]
+      ?.trim();
+  if (revertReason) {
+    return `合约拒绝了这次操作：${revertReason}`;
+  }
+
+  // viem 错误优先用 shortMessage,避免把多行堆栈或泛化文案直接抛给用户
+  if (
+    caught &&
+    typeof caught === "object" &&
+    "shortMessage" in caught &&
+    typeof (caught as { shortMessage: unknown }).shortMessage === "string"
+  ) {
+    return (caught as { shortMessage: string }).shortMessage;
+  }
+
   if (message.includes("Contract Call:") || message.includes("Details:")) {
-    const reason = message.match(/reverted with reason string '([^']+)'/)?.[1];
-    return reason ? `合约拒绝了这次操作：${reason}` : fallback;
+    return message.split("\n")[0]?.trim() || fallback;
   }
 
   return caught instanceof Error ? caught.message : fallback;

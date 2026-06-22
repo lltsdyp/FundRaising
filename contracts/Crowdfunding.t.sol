@@ -2,8 +2,29 @@
 pragma solidity ^0.8.28;
 
 import {Crowdfunding} from "./Crowdfunding.sol";
+import {DonationBadge} from "./DonationBadge.sol";
 import {Project} from "./Project.sol";
 import {Test} from "forge-std/Test.sol";
+
+contract UnknownProjectMock {
+  function minimumContribution() external pure returns (uint256) {
+    revert("Fake project called");
+  }
+
+  function isOngoing() external pure returns (bool) {
+    revert("Fake project called");
+  }
+
+  function contribute(address) external payable returns (bool, uint256) {
+    revert("Fake project called");
+  }
+}
+
+contract NonReceiverContributor {
+  function contribute(Crowdfunding crowdfunding, address project) external payable {
+    crowdfunding.contribute{value: msg.value}(project);
+  }
+}
 
 contract CrowdfundingTest is Test {
   Crowdfunding crowdfunding;
@@ -11,10 +32,26 @@ contract CrowdfundingTest is Test {
   address creator = address(0xA11CE);
   address contributor = address(0xB0B);
   address contributorTwo = address(0xCAFE);
+  address contributorThree = address(0xD00D);
+  address contributorFour = address(0xE11E);
 
   uint256 minimumContribution = 1 ether;
   uint256 targetContribution = 10 ether;
   uint256 deadline;
+
+  event BadgeMinted(
+    uint256 indexed tokenId,
+    address indexed recipient,
+    address indexed project,
+    uint256 rank,
+    string tier
+  );
+
+  event ContributionReceived(
+    address indexed projectAddress,
+    uint256 contributedAmount,
+    address indexed contributorAddress
+  );
 
   function setUp() public {
     crowdfunding = new Crowdfunding();
@@ -59,6 +96,159 @@ contract CrowdfundingTest is Test {
     assertEq(project.getContractBalance(), 2 ether);
   }
 
+  function test_UnknownProjectRevertsBeforeExternalCallAndCannotMint() public {
+    UnknownProjectMock fakeProject = new UnknownProjectMock();
+    DonationBadge badge = crowdfunding.donationBadge();
+
+    vm.deal(contributor, 1 ether);
+    vm.prank(contributor);
+    vm.expectRevert(bytes("Unknown project"));
+    crowdfunding.contribute{value: 1 ether}(address(fakeProject));
+
+    assertEq(badge.balanceOf(contributor), 0);
+    assertEq(badge.totalSupply(), 0);
+  }
+
+  function test_FirstThreeUniqueContributorsReceiveRankedBadgesAndEmitEvents()
+    public
+  {
+    Project project = _createProject();
+    DonationBadge badge = crowdfunding.donationBadge();
+
+    address[4] memory donors = [
+      contributor,
+      contributorTwo,
+      contributorThree,
+      contributorFour
+    ];
+
+    for (uint256 i; i < donors.length; ++i) vm.deal(donors[i], 1 ether);
+
+    vm.expectEmit(true, true, true, true, address(badge));
+    emit BadgeMinted(1, contributor, address(project), 1, "Gold");
+    vm.expectEmit(true, true, false, true, address(crowdfunding));
+    emit ContributionReceived(address(project), 1 ether, contributor);
+
+    for (uint256 i; i < donors.length; ++i) {
+      vm.prank(donors[i]);
+      crowdfunding.contribute{value: 1 ether}(address(project));
+    }
+
+    assertEq(badge.balanceOf(contributor), 1);
+    assertEq(badge.balanceOf(contributorTwo), 1);
+    assertEq(badge.balanceOf(contributorThree), 1);
+    assertEq(badge.balanceOf(contributorFour), 0);
+    assertEq(badge.totalSupply(), 3);
+
+    for (uint256 tokenId = 1; tokenId <= 3; ++tokenId) {
+      (address badgeProject, uint256 rank) = badge.badges(tokenId);
+      assertEq(badgeProject, address(project));
+      assertEq(rank, tokenId);
+      assertEq(project.contributorRank(donors[tokenId - 1]), tokenId);
+    }
+
+    assertEq(project.contributorRank(contributorFour), 4);
+  }
+
+  function test_ContractContributorWithoutERC721ReceiverGetsDirectMintBadge()
+    public
+  {
+    Project project = _createProject();
+    DonationBadge badge = crowdfunding.donationBadge();
+    NonReceiverContributor contractContributor = new NonReceiverContributor();
+
+    vm.deal(contributor, 1 ether);
+    vm.prank(contributor);
+    contractContributor.contribute{value: 1 ether}(
+      crowdfunding,
+      address(project)
+    );
+
+    assertEq(project.contributions(address(contractContributor)), 1 ether);
+    assertEq(project.contributorRank(address(contractContributor)), 1);
+    assertEq(badge.balanceOf(address(contractContributor)), 1);
+    assertEq(badge.ownerOf(1), address(contractContributor));
+  }
+
+  function test_RepeatContributionDoesNotMintAnotherBadge() public {
+    Project project = _createProject();
+    DonationBadge badge = crowdfunding.donationBadge();
+
+    vm.deal(contributor, 2 ether);
+
+    vm.startPrank(contributor);
+    crowdfunding.contribute{value: 1 ether}(address(project));
+    crowdfunding.contribute{value: 1 ether}(address(project));
+    vm.stopPrank();
+
+    assertEq(badge.balanceOf(contributor), 1);
+    assertEq(badge.totalSupply(), 1);
+    assertEq(project.contributorRank(contributor), 1);
+  }
+
+  function test_FailedProjectRefundPreservesBadgeAndRank() public {
+    Project project = _createProject();
+    DonationBadge badge = crowdfunding.donationBadge();
+
+    vm.deal(contributor, 2 ether);
+    vm.prank(contributor);
+    crowdfunding.contribute{value: 1 ether}(address(project));
+
+    vm.warp(deadline);
+    project.endProject();
+
+    vm.prank(contributor);
+    project.withdrawContribution();
+
+    assertEq(project.contributions(contributor), 0);
+    assertEq(project.contributorRank(contributor), 1);
+    assertEq(badge.balanceOf(contributor), 1);
+
+    (address badgeProject, uint256 rank) = badge.badges(1);
+    assertEq(badgeProject, address(project));
+    assertEq(rank, 1);
+  }
+
+  function test_MilestoneProjectMintsOnlyFirstThreeUniqueContributorBadges()
+    public
+  {
+    Project project = _createMilestoneProject();
+    DonationBadge badge = crowdfunding.donationBadge();
+
+    address[4] memory donors = [
+      contributor,
+      contributorTwo,
+      contributorThree,
+      contributorFour
+    ];
+
+    vm.deal(contributor, 2 ether);
+    for (uint256 i = 1; i < donors.length; ++i) vm.deal(donors[i], 1 ether);
+
+    for (uint256 i; i < donors.length; ++i) {
+      vm.prank(donors[i]);
+      crowdfunding.contribute{value: 1 ether}(address(project));
+    }
+
+    vm.prank(contributor);
+    crowdfunding.contribute{value: 1 ether}(address(project));
+
+    assertEq(badge.balanceOf(contributor), 1);
+    assertEq(badge.balanceOf(contributorTwo), 1);
+    assertEq(badge.balanceOf(contributorThree), 1);
+    assertEq(badge.balanceOf(contributorFour), 0);
+    assertEq(badge.totalSupply(), 3);
+
+    for (uint256 tokenId = 1; tokenId <= 3; ++tokenId) {
+      (address badgeProject, uint256 rank) = badge.badges(tokenId);
+      assertEq(badgeProject, address(project));
+      assertEq(rank, tokenId);
+      assertEq(project.contributorRank(donors[tokenId - 1]), tokenId);
+    }
+
+    assertEq(project.contributorRank(contributorFour), 4);
+  }
+
   function test_DirectProjectContributionCannotSpoofContributorIdentity() public {
     Project project = _createProject();
     address spoofedContributor = contributorTwo;
@@ -88,6 +278,58 @@ contract CrowdfundingTest is Test {
     assertEq(project.contributions(contributor), 5 ether);
     assertEq(project.raisedAmount(), 5 ether);
     assertEq(project.noOfContributors(), 1);
+  }
+
+  function test_ContributorRanksAreSequentialAndRepeatContributionKeepsRank()
+    public
+  {
+    Project project = _createProject();
+
+    vm.deal(contributor, 5 ether);
+    vm.deal(contributorTwo, 5 ether);
+
+    vm.prank(contributor);
+    crowdfunding.contribute{value: 1 ether}(address(project));
+
+    vm.prank(contributorTwo);
+    crowdfunding.contribute{value: 1 ether}(address(project));
+
+    assertEq(project.contributorRank(contributor), 1);
+    assertEq(project.contributorRank(contributorTwo), 2);
+
+    vm.prank(contributor);
+    crowdfunding.contribute{value: 1 ether}(address(project));
+
+    assertEq(project.contributorRank(contributor), 1);
+    assertEq(project.contributorRank(contributorTwo), 2);
+  }
+
+  function test_ProjectContributionReturnsNewContributorStatusAndRank() public {
+    Project project = _createProject();
+
+    vm.deal(address(crowdfunding), 3 ether);
+
+    vm.prank(address(crowdfunding));
+    (bool isNewContributor, uint256 rank) = project.contribute{value: 1 ether}(
+      contributor
+    );
+
+    assertTrue(isNewContributor);
+    assertEq(rank, 1);
+
+    vm.prank(address(crowdfunding));
+    (isNewContributor, rank) = project.contribute{value: 1 ether}(contributor);
+
+    assertFalse(isNewContributor);
+    assertEq(rank, 1);
+
+    vm.prank(address(crowdfunding));
+    (isNewContributor, rank) = project.contribute{value: 1 ether}(
+      contributorTwo
+    );
+
+    assertTrue(isNewContributor);
+    assertEq(rank, 2);
   }
 
   function test_GetContributorsReturnsUniqueContributorList() public {

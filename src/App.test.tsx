@@ -1,13 +1,25 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
-import { Profile, ProjectDetail, ProjectList, ToastStack } from "./App";
+import {
+  Profile,
+  ProfileRoute,
+  ProjectDetail,
+  ProjectList,
+  ToastStack,
+  useProfileBadgeState,
+} from "./App";
 import {
   DEFAULT_CROWDFUNDING_ADDRESS,
   getInitialCrowdfundingAddress,
 } from "./contracts";
 import { deriveProfileSummary } from "./profile";
-import { FundingModel, type FundingProject } from "./types";
+import {
+  FundingModel,
+  type DonationBadge,
+  type FundingProject,
+} from "./types";
 import { ProjectState } from "./utils";
 
 const sampleProject: FundingProject = {
@@ -375,6 +387,9 @@ describe("App presentation components", () => {
       root.render(
         <Profile
           address={supporter}
+          badges={[]}
+          badgeLoading={false}
+          badgeError="徽章读取失败"
           isSelf
           summary={summary}
           nowSeconds={1_000}
@@ -388,7 +403,50 @@ describe("App presentation components", () => {
     expect(host.textContent).toContain("支持项目数");
     expect(host.textContent).toContain("成功支持项目");
     expect(host.textContent).toContain("我的资料");
+    expect(host.textContent).toContain("徽章读取失败");
     expect(host.querySelectorAll(".project-row").length).toBe(2); // 1 supported + 1 created
+
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("renders a badge and reuses the profile project callback", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const supporter = "0x3333333333333333333333333333333333333333";
+    const onOpenProject = vi.fn();
+    const summary = deriveProfileSummary([], supporter, 1_000);
+
+    act(() => {
+      root.render(
+        <Profile
+          address={supporter}
+          badges={[
+            {
+              tokenId: 1n,
+              project: sampleProject.address,
+              projectTitle: sampleProject.title,
+              rank: 1,
+              tier: "gold",
+              tokenUri: "data:application/json,{}",
+            },
+          ]}
+          badgeLoading={false}
+          badgeError=""
+          isSelf={false}
+          summary={summary}
+          nowSeconds={1_000}
+          onBack={() => undefined}
+          onOpenProject={onOpenProject}
+        />,
+      );
+    });
+
+    const badge = host.querySelector<HTMLButtonElement>(".badge-card");
+    expect(badge?.textContent).toContain(sampleProject.title);
+    act(() => badge?.click());
+    expect(onOpenProject).toHaveBeenCalledWith(sampleProject.address);
 
     act(() => root.unmount());
     host.remove();
@@ -405,6 +463,9 @@ describe("App presentation components", () => {
       withBalanceRoot.render(
         <Profile
           address={supporter}
+          badges={[]}
+          badgeLoading={false}
+          badgeError=""
           isSelf
           summary={summary}
           nowSeconds={1_000}
@@ -426,6 +487,9 @@ describe("App presentation components", () => {
       withoutBalanceRoot.render(
         <Profile
           address={supporter}
+          badges={[]}
+          badgeLoading={false}
+          badgeError=""
           isSelf={false}
           summary={summary}
           nowSeconds={1_000}
@@ -438,5 +502,234 @@ describe("App presentation components", () => {
     expect(withoutBalance.textContent).not.toContain("钱包余额");
     act(() => withoutBalanceRoot.unmount());
     withoutBalance.remove();
+  });
+});
+
+describe("useProfileBadgeState", () => {
+  const crowdfundingAddress = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const firstProfile = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  const secondProfile = "0xcccccccccccccccccccccccccccccccccccccccc";
+  const badge: DonationBadge = {
+    tokenId: 1n,
+    project: sampleProject.address,
+    rank: 1,
+    tier: "gold",
+    tokenUri: "data:application/json,{}",
+  };
+
+  function Harness({
+    profileAddress,
+    loader,
+    onRender,
+  }: {
+    profileAddress: string;
+    loader: (
+      crowdfundingAddress: `0x${string}`,
+      profileAddress: `0x${string}`,
+    ) => Promise<DonationBadge[]>;
+    onRender?: (snapshot: {
+      profileAddress: string;
+      loading: boolean;
+      tokenIds: string;
+    }) => void;
+  }) {
+    const state = useProfileBadgeState(
+      crowdfundingAddress,
+      profileAddress,
+      loader,
+    );
+    const tokenIds = state.badges.map((item) => item.tokenId).join(",");
+    onRender?.({ profileAddress, loading: state.loading, tokenIds });
+
+    return (
+      <div
+        data-loading={String(state.loading)}
+        data-error={state.error}
+        data-token-ids={tokenIds}
+      />
+    );
+  }
+
+  it("loads badges and exposes failures without throwing", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const loader = vi
+      .fn()
+      .mockResolvedValueOnce([badge])
+      .mockRejectedValueOnce(new Error("RPC unavailable"));
+
+    await act(async () => {
+      root.render(<Harness profileAddress={firstProfile} loader={loader} />);
+    });
+    expect(host.firstElementChild?.getAttribute("data-loading")).toBe("false");
+    expect(host.firstElementChild?.getAttribute("data-token-ids")).toBe("1");
+
+    await act(async () => {
+      root.render(<Harness profileAddress={secondProfile} loader={loader} />);
+    });
+    expect(host.firstElementChild?.getAttribute("data-loading")).toBe("false");
+    expect(host.firstElementChild?.getAttribute("data-error")).toBe(
+      "徽章加载失败：RPC unavailable",
+    );
+    expect(host.firstElementChild?.getAttribute("data-token-ids")).toBe("");
+
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("ignores a stale result after the profile address changes", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    let resolveFirst: ((badges: DonationBadge[]) => void) | undefined;
+    const firstRequest = new Promise<DonationBadge[]>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const loader = vi
+      .fn()
+      .mockReturnValueOnce(firstRequest)
+      .mockResolvedValueOnce([{ ...badge, tokenId: 2n }]);
+    const renders: Array<{
+      profileAddress: string;
+      loading: boolean;
+      tokenIds: string;
+    }> = [];
+
+    await act(async () => {
+      root.render(
+        <Harness
+          profileAddress={firstProfile}
+          loader={loader}
+          onRender={(snapshot) => renders.push(snapshot)}
+        />,
+      );
+    });
+    renders.length = 0;
+    await act(async () => {
+      root.render(
+        <Harness
+          profileAddress={secondProfile}
+          loader={loader}
+          onRender={(snapshot) => renders.push(snapshot)}
+        />,
+      );
+    });
+    expect(renders[0]).toEqual({
+      profileAddress: secondProfile,
+      loading: true,
+      tokenIds: "",
+    });
+    expect(host.firstElementChild?.getAttribute("data-token-ids")).toBe("2");
+
+    await act(async () => {
+      resolveFirst?.([badge]);
+      await firstRequest;
+    });
+    expect(host.firstElementChild?.getAttribute("data-token-ids")).toBe("2");
+
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("hides the previous profile badges on the first render for a new address", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const secondRequest = new Promise<DonationBadge[]>(() => undefined);
+    const loader = vi
+      .fn()
+      .mockResolvedValueOnce([badge])
+      .mockReturnValueOnce(secondRequest);
+    const renders: Array<{
+      profileAddress: string;
+      loading: boolean;
+      tokenIds: string;
+    }> = [];
+
+    await act(async () => {
+      root.render(
+        <Harness
+          profileAddress={firstProfile}
+          loader={loader}
+          onRender={(snapshot) => renders.push(snapshot)}
+        />,
+      );
+    });
+    expect(host.firstElementChild?.getAttribute("data-token-ids")).toBe("1");
+
+    renders.length = 0;
+    act(() => {
+      root.render(
+        <Harness
+          profileAddress={secondProfile}
+          loader={loader}
+          onRender={(snapshot) => renders.push(snapshot)}
+        />,
+      );
+    });
+
+    expect(renders[0]).toEqual({
+      profileAddress: secondProfile,
+      loading: true,
+      tokenIds: "",
+    });
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("does not publish a result that resolves after unmount", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    let resolveRequest: ((badges: DonationBadge[]) => void) | undefined;
+    const request = new Promise<DonationBadge[]>((resolve) => {
+      resolveRequest = resolve;
+    });
+    const renders: string[] = [];
+
+    await act(async () => {
+      root.render(
+        <Harness
+          profileAddress={firstProfile}
+          loader={() => request}
+          onRender={({ tokenIds }) => renders.push(tokenIds)}
+        />,
+      );
+    });
+    act(() => root.unmount());
+    const renderCountAtUnmount = renders.length;
+
+    await act(async () => {
+      resolveRequest?.([badge]);
+      await request;
+    });
+    expect(renders).toHaveLength(renderCountAtUnmount);
+    host.remove();
+  });
+});
+
+describe("ProfileRoute", () => {
+  it("redirects an invalid profile address to the project list", () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+
+    act(() => {
+      root.render(
+        <MemoryRouter initialEntries={["/profile/not-an-address"]}>
+          <Routes>
+            <Route path="/" element={<div data-project-list>项目列表</div>} />
+            <Route path="/profile/:address" element={<ProfileRoute />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+    });
+
+    expect(host.querySelector("[data-project-list]")?.textContent).toBe(
+      "项目列表",
+    );
+    act(() => root.unmount());
+    host.remove();
   });
 });

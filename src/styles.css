@@ -1,4 +1,7 @@
 :root {
+  --badge-gold: #b58a27;
+  --badge-silver: #8a8d8f;
+  --badge-bronze: #a5663f;
   color: #312d24;
   background: #f5efe2;
   font-family:
@@ -369,6 +372,77 @@ label {
   color: #6d6250;
 }
 
+.badge-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(208px, 1fr));
+  gap: 16px;
+}
+
+.badge-card {
+  display: grid;
+  min-width: 0;
+  min-height: 176px;
+  place-items: center;
+  gap: 8px;
+  border-width: 2px;
+  border-color: var(--badge-medal-color);
+  border-radius: 8px;
+  background: #fffaf0;
+  padding: 16px;
+  text-align: center;
+}
+
+.badge-card:hover:not(:disabled) {
+  background: #f7edda;
+}
+
+.badge-card.gold {
+  --badge-medal-color: var(--badge-gold);
+}
+
+.badge-card.silver {
+  --badge-medal-color: var(--badge-silver);
+}
+
+.badge-card.bronze {
+  --badge-medal-color: var(--badge-bronze);
+}
+
+.badge-medal {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  border: 8px solid color-mix(in srgb, var(--badge-medal-color) 24%, white);
+  border-radius: 50%;
+  background: var(--badge-medal-color);
+  box-shadow: 0 0 0 2px var(--badge-medal-color);
+  color: #fffaf0;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.badge-project-title {
+  overflow-wrap: anywhere;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.badge-project-address {
+  color: #786e5e;
+  font-size: 13px;
+}
+
+.badge-state {
+  text-align: center;
+}
+
+.badge-error {
+  border-color: #c7907f;
+  background: #f8e8df;
+  color: #7d3528;
+}
+
 .project-form,
 .action-panel form {
   display: grid;
@@ -586,6 +660,10 @@ label {
   .milestone-form-row,
   .milestone-submit,
   .milestone-row {
+    grid-template-columns: 1fr;
+  }
+
+  .badge-grid {
     grid-template-columns: 1fr;
   }
 }

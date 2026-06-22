@@ -2,6 +2,7 @@ import {
   createPublicClient,
   createWalletClient,
   custom,
+  http,
   isAddress,
   parseEther,
   type Address,
@@ -20,6 +21,22 @@ import { ProjectState, withOperationTimeout } from "./utils";
 export const DEFAULT_CROWDFUNDING_ADDRESS: Address =
   "0x5FbDB2315678afecb367f032d93F642f64180aa3";
 
+export const DEFAULT_RPC_URL = "http://127.0.0.1:8545";
+
+export function getRpcUrl(): string {
+  const configured = import.meta.env.VITE_RPC_URL;
+  if (typeof configured === "string" && configured.length > 0) {
+    return configured;
+  }
+
+  // 默认走同源的 /rpc(由 Vite dev server 代理到节点),绕开浏览器 CORS。
+  if (typeof window !== "undefined" && window.location?.origin) {
+    return `${window.location.origin}/rpc`;
+  }
+
+  return DEFAULT_RPC_URL;
+}
+
 export const GANACHE_TRANSACTION_GAS_CAP = 16_777_216n;
 export const READ_OPERATION_TIMEOUT_MS = 20_000;
 export const WALLET_REQUEST_TIMEOUT_MS = 60_000;
@@ -27,7 +44,10 @@ export const TRANSACTION_CONFIRMATION_TIMEOUT_MS = 120_000;
 
 export const WRITE_GAS_LIMITS = {
   createProject: 2_500_000n,
-  contribute: 300_000n,
+  // 首次进入前三名的捐赠会额外 mint 一枚 ERC721Enumerable 徽章
+  // (Crowdfunding.contribute -> donationBadge.mint)，单是 mint 就要 ~150k-200k，
+  // 叠加首次捐赠的多个 SSTORE 会超过旧的 300k 上限导致 out-of-gas，故上调。
+  contribute: 600_000n,
   submitMilestone: 200_000n,
   approveMilestone: 200_000n,
   releaseMilestoneFunds: 250_000n,
@@ -49,9 +69,11 @@ function getEthereumProvider() {
   return window.ethereum;
 }
 
-function getPublicClient() {
+export function getPublicClient() {
+  // 只读请求直连节点,避免经 MetaMask 转发导致其区块轮询被并发读打爆
+  // (-32002 "RPC endpoint returned too many errors")。签名/发交易仍走钱包 provider。
   return createPublicClient({
-    transport: custom(getEthereumProvider()),
+    transport: http(getRpcUrl()),
   });
 }
 
@@ -133,6 +155,21 @@ export async function connectWallet(): Promise<WalletSession> {
     address: accounts[0],
     chainId: Number.parseInt(chainIdHex, 16),
   };
+}
+
+export async function requestAccountSelection(): Promise<WalletSession> {
+  const provider = getEthereumProvider();
+  // 让 MetaMask 弹出账户选择框，重新授权站点可访问的账户。
+  // 仅靠 accountsChanged 无法切到未授权的账户，必须重新请求权限。
+  await withWalletRequestTimeout(
+    provider.request({
+      method: "wallet_requestPermissions",
+      params: [{ eth_accounts: {} }],
+    }),
+    "切换钱包账户",
+  );
+
+  return connectWallet();
 }
 
 export async function loadAccountBalance(address: Address): Promise<bigint> {

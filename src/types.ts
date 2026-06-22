@@ -16,6 +16,16 @@ export type ProjectContribution = {
   amount: bigint;
 };
 
+export type DonationBadgeTier = "gold" | "silver" | "bronze";
+
+export type DonationBadge = {
+  tokenId: bigint;
+  project: Address;
+  rank: 1 | 2 | 3;
+  tier: DonationBadgeTier;
+  tokenUri: string;
+};
+
 export type ProjectMilestone = {
   index: number;
   title: string;

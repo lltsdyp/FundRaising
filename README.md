@@ -32,6 +32,20 @@ npm run dev
 The app connects to MetaMask, lists projects from the Crowdfunding contract, and
 lets users create projects, donate, and withdraw or refund after the deadline.
 
+## Early-supporter badges
+
+For each project, the first three unique contributor addresses receive a
+soulbound donation badge when they make their first valid contribution:
+
+- rank 1: Gold
+- rank 2: Silver
+- rank 3: Bronze
+
+A contributor's rank is fixed by their first contribution. Donating again does
+not mint another badge or reorder contributors. A refund returns the
+contribution but does not destroy the badge. Badge JSON and SVG metadata are
+generated entirely on-chain by the `DonationBadge` contract.
+
 ## Project Types
 
 MyFundings supports two funding models:
@@ -56,7 +70,14 @@ npx hardhat test nodejs
 
 ### Make a deployment to Sepolia
 
-This project includes an example Ignition module to deploy the contract. You can deploy this module to a locally simulated chain or to Sepolia.
+The Ignition module deploys `Crowdfunding`, whose constructor deploys its paired
+`DonationBadge` contract. The frontend still needs only the `Crowdfunding`
+address in `VITE_CROWDFUNDING_ADDRESS`; do not configure a separate badge
+address.
+
+Badge support requires a fresh `Crowdfunding` deployment. Existing deployments
+cannot be upgraded by rerunning the frontend and historical contributions are
+not backfilled with badges.
 
 To run the deployment to a local chain:
 
