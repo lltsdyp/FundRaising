@@ -373,14 +373,14 @@ label {
 }
 
 .badge-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(208px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 16px;
 }
 
 .badge-card {
   display: grid;
-  min-width: 0;
+  width: 208px;
   min-height: 176px;
   place-items: center;
   gap: 8px;
@@ -663,8 +663,8 @@ label {
     grid-template-columns: 1fr;
   }
 
-  .badge-grid {
-    grid-template-columns: 1fr;
+  .badge-card {
+    width: 100%;
   }
 }
 
