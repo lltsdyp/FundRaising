@@ -18,6 +18,7 @@ import {
 import { isAddress, parseEther, type Address } from "viem";
 import { BadgeGallery, type DisplayBadge } from "./BadgeGallery";
 import { loadDonationBadges } from "./badges";
+import { ConnectedDonorReputation } from "./donor-reputation/ConnectedDonorReputation";
 import {
   approveMilestone,
   connectWallet,
@@ -408,6 +409,9 @@ function AppLayout() {
           {wallet ? (
             <>
               <span className="network-pill">Chain {wallet.chainId}</span>
+              <Link className="nav-link" to="/donor-reputation">
+                公益身份
+              </Link>
               <Link className="address-pill" to={`/profile/${wallet.address}`}>
                 {formatAddress(wallet.address)}
               </Link>
@@ -698,6 +702,22 @@ export function useProfileBadgeState(
   };
 }
 
+export function DonorReputationRoute() {
+  const ctx = useAppContext();
+
+  return (
+    <section className="content-section">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Donor Reputation</p>
+          <h2>链上公益身份预览</h2>
+        </div>
+      </div>
+      <ConnectedDonorReputation address={ctx.wallet?.address} />
+    </section>
+  );
+}
+
 function App() {
   return (
     <Routes>
@@ -706,6 +726,7 @@ function App() {
         <Route path="create" element={<CreateProjectRoute />} />
         <Route path="project/:address" element={<ProjectDetailRoute />} />
         <Route path="profile/:address" element={<ProfileRoute />} />
+        <Route path="donor-reputation" element={<DonorReputationRoute />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

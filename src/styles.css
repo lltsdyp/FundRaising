@@ -692,3 +692,60 @@ label {
 a.address-pill {
   text-decoration: none;
 }
+
+/* Donor reputation preview */
+.privilege-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.privilege-list li {
+  color: #4a4234;
+}
+
+.state-badge.donor-level-genesis {
+  border-color: var(--badge-gold);
+  background: color-mix(in srgb, var(--badge-gold) 18%, white);
+  color: var(--badge-gold);
+}
+
+.state-badge.donor-level-gold {
+  border-color: var(--badge-gold);
+  color: var(--badge-gold);
+}
+
+.state-badge.donor-level-silver {
+  border-color: var(--badge-silver);
+  color: var(--badge-silver);
+}
+
+.state-badge.donor-level-bronze {
+  border-color: var(--badge-bronze);
+  color: var(--badge-bronze);
+}
+
+.disclaimer-note {
+  border: 1px dashed #c8b992;
+  border-radius: 12px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  color: #594a2d;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.nav-link:hover {
+  background: #f8efd9;
+}
